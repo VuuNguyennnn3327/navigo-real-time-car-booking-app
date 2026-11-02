@@ -2240,6 +2240,17 @@ class DriverController {
         // Asynchronously calculate realistic turn-by-turn road route via C++ Dijkstra / OSRM
         const detailedPath = await this.calculateNavigationRoute(routeOrigin, routeTarget);
         if (this._routeRenderSeq === routeToken && detailedPath && detailedPath.length > 1) {
+          if (this.activeTrip) {
+            this.activeTrip.driverApproachGeometry = detailedPath;
+          }
+          try {
+            const act = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
+            if (act && (act.id === this.activeTrip?.id || !act.id)) {
+              act.driverApproachGeometry = detailedPath;
+              localStorage.setItem('goride_active_trip', JSON.stringify(act));
+            }
+          } catch (e) {}
+
           if (typeof this.mapController.drawRoute === 'function') {
             this.mapController.drawRoute(detailedPath, {
               color: routeColor,

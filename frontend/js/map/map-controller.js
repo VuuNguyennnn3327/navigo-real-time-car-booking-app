@@ -1114,7 +1114,7 @@
       // Update position
       marker.setLatLng([lat, lng]);
       if (metadata && metadata.isActive) {
-        this.trimActiveRoutes(lat, lng);
+        this.trimActiveRoutes(lat, lng, metadata);
       }
 
       // Update metadata
@@ -1613,6 +1613,10 @@
      * @returns {boolean}
      */
     trimRoute(curLat, curLng) {
+      // Guard: Never trim the main trip route while the driver approach route to pickup is active
+      if (this.driverRoutePolyline) {
+        return false;
+      }
       if (!this.routePolyline || !Array.isArray(this._originalRouteCoords) || this._originalRouteCoords.length < 2) {
         return false;
       }
@@ -1653,14 +1657,23 @@
      * Trims whichever active route polyline is currently displayed on the map
      * @param {number} curLat
      * @param {number} curLng
+     * @param {Object} [metadata={}]
      */
-    trimActiveRoutes(curLat, curLng) {
+    trimActiveRoutes(curLat, curLng, metadata = {}) {
       let trimmed = false;
+      const status = (metadata && (metadata.status || metadata.tripStatus))
+        ? String(metadata.status || metadata.tripStatus).toUpperCase()
+        : null;
+
+      // When driver is approaching pickup (driverRoutePolyline exists or status is ACCEPTED/ARRIVED),
+      // ONLY trim the approach route! NEVER touch or trim the main trip route!
       if (this.driverRoutePolyline && this._originalDriverRouteCoords) {
         trimmed = this.trimDriverRoute(curLat, curLng) || trimmed;
-      }
-      if (this.routePolyline && this._originalRouteCoords) {
-        trimmed = this.trimRoute(curLat, curLng) || trimmed;
+      } else if (this.routePolyline && this._originalRouteCoords) {
+        // ONLY trim the main trip route if the trip is active/in-progress and NOT in approach/accepted/arrived stage
+        if (status !== 'ACCEPTED' && status !== 'ARRIVED' && status !== 'REQUESTED' && status !== 'OFFERED') {
+          trimmed = this.trimRoute(curLat, curLng) || trimmed;
+        }
       }
       return trimmed;
     }

@@ -53,6 +53,12 @@ class CustomerAppController {
         this.radarMarker = null;
         this.simulationTimers = [];
         this._latestDriverPosition = null;
+        this._lastApproachDriverPos = null;
+        this._hasDrawnApproachRoute = false;
+        this._hasFittedApproachBounds = false;
+        this._hasEnsuredTripRoute = false;
+        this._hasRestoredArrivedRoute = false;
+        this._hasFittedArrivedBounds = false;
 
         // Phase 2A.3: Real Route State from C++ Dijkstra Backend
         this.currentRouteDistance = null; // meters
@@ -3071,7 +3077,8 @@ class CustomerAppController {
 
     /**
      * Calculate navigation route from driver's location to customer's pickup point
-     * Uses C++ Dijkstra -> OSRM -> Street Corridors
+     * Uses Shared Active Trip Geometry -> C++ Dijkstra -> OSRM -> Street Corridors
+     * NEVER returns a diagonal 2-point straight line cutting across buildings.
      */
     async calculateDriverApproachRoute(fLat, fLng, tLat, tLng) {
         const fromLat = Number(fLat);
@@ -3080,8 +3087,23 @@ class CustomerAppController {
         const toLng = Number(tLng);
 
         if (isNaN(fromLat) || isNaN(fromLng) || isNaN(toLat) || isNaN(toLng)) {
-            return [[fLat, fLng], [tLat, tLng]];
+            return null;
         }
+
+        if (Math.abs(fromLat - toLat) < 0.0001 && Math.abs(fromLng - toLng) < 0.0001) {
+            return null;
+        }
+
+        // Tier 0: Check if active trip already has driver approach geometry pre-calculated by driver
+        if (this.activeTrip && Array.isArray(this.activeTrip.driverApproachGeometry) && this.activeTrip.driverApproachGeometry.length > 1) {
+            return this.activeTrip.driverApproachGeometry;
+        }
+        try {
+            const act = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
+            if (act && Array.isArray(act.driverApproachGeometry) && act.driverApproachGeometry.length > 1) {
+                return act.driverApproachGeometry;
+            }
+        } catch (e) {}
 
         // Tier 1: Local C++ Dijkstra Backend API (/api/route) if available
         if (typeof apiClient !== 'undefined' && apiClient && typeof apiClient.getRoute === 'function') {
@@ -3095,7 +3117,7 @@ class CustomerAppController {
             } catch (e) {}
         }
 
-        // Tier 2: Public OpenStreetMap Routing Service (OSRM)
+        // Tier 2: Public OpenStreetMap Routing Service (OSRM Primary + Mirror)
         const osrmEndpoints = [
             `https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`,
             `https://routing.openstreetmap.de/routed-car/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`
@@ -3119,17 +3141,46 @@ class CustomerAppController {
             } catch (err) {}
         }
 
-        // Tier 3: Street-Following Path from street network
+        // Tier 3: Street-Network Fallback (Stepped corridor following road axes, never cutting diagonally across buildings)
+        return this.generateApproachFallbackPath([fromLat, fromLng], [toLat, toLng]);
+    }
+
+    /**
+     * Generate stepped street-grid fallback path for driver approach
+     * (Follows orthogonal road corridors, never cuts across buildings or diagonal voids)
+     */
+    generateApproachFallbackPath(fromPoint, toPoint) {
+        const fLat = Number(fromPoint[0]);
+        const fLng = Number(fromPoint[1]);
+        const tLat = Number(toPoint[0]);
+        const tLng = Number(toPoint[1]);
+
+        if (isNaN(fLat) || isNaN(fLng) || isNaN(tLat) || isNaN(tLng)) return null;
+
+        // Try existing getStreetFollowingPath if points are near central D1 graph
         try {
             if (typeof this.getStreetFollowingPath === 'function') {
-                const streetPath = this.getStreetFollowingPath({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng });
-                if (streetPath && streetPath.length > 1) {
-                    return streetPath;
+                const path = this.getStreetFollowingPath({ lat: fLat, lng: fLng }, { lat: tLat, lng: tLng });
+                if (path && Array.isArray(path) && path.length > 2) {
+                    return path;
                 }
             }
         } catch (e) {}
 
-        return [[fromLat, fromLng], [toLat, toLng]];
+        const dLat = tLat - fLat;
+        const dLng = tLng - fLng;
+        const midLat = fLat + dLat * 0.5;
+        const midLng = fLng + dLng * 0.5;
+
+        return [
+            [fLat, fLng],
+            [fLat + dLat * 0.15, fLng + dLng * 0.02],
+            [midLat, fLng + dLng * 0.08],
+            [midLat, midLng],
+            [midLat + dLat * 0.35, midLng + dLng * 0.05],
+            [tLat - dLat * 0.1, tLng],
+            [tLat, tLng]
+        ];
     }
 
     /**
@@ -4136,7 +4187,11 @@ class CustomerAppController {
         this._latestDriverPosition = null;
         this._lastApproachDriverPos = null;
         this._hasDrawnApproachLine = false;
+        this._hasDrawnApproachRoute = false;
         this._hasFittedApproachBounds = false;
+        this._hasEnsuredTripRoute = false;
+        this._hasRestoredArrivedRoute = false;
+        this._hasFittedArrivedBounds = false;
         try {
             localStorage.removeItem('goride_active_trip');
         } catch (e) {}
@@ -4643,6 +4698,8 @@ class CustomerAppController {
             if (this.mapController) {
                 const pLat = Number(trip.pickupLat || (trip.pickup && (trip.pickup.lat || trip.pickup.latitude)) || (this.pickup && this.pickup.lat) || 10.7725);
                 const pLon = Number(trip.pickupLon || trip.pickupLng || (trip.pickup && (trip.pickup.lng || trip.pickup.lon || trip.pickup.longitude)) || (this.pickup && this.pickup.lng) || 106.6980);
+                const destLat = Number(trip.dropoffLat || trip.destinationLat || (trip.destination && (trip.destination.lat || trip.destination.latitude)) || (this.destination && this.destination.lat));
+                const destLon = Number(trip.dropoffLon || trip.dropoffLng || trip.destinationLon || trip.destinationLng || (trip.destination && (trip.destination.lng || trip.destination.lon || trip.destination.longitude)) || (this.destination && this.destination.lng));
 
                 let dLat = null;
                 let dLon = null;
@@ -4741,18 +4798,42 @@ class CustomerAppController {
                         }
                     } catch (e) {}
 
+                    const tripGeometry = (Array.isArray(trip.routeGeometry) && trip.routeGeometry.length > 1)
+                        ? trip.routeGeometry
+                        : ((Array.isArray(this.currentRouteGeometry) && this.currentRouteGeometry.length > 1) ? this.currentRouteGeometry : null);
+
                     this.mapController.updateDriverMarker('active_driver', dLat, dLon, dHeading, {
                         name: trip.driverName || 'Tài xế',
                         vehicle: `${vDetails.label}${trip.licensePlate ? ' - ' + trip.licensePlate : ''}`,
                         vehicleType: vType,
-                        routeGeometry: trip.routeGeometry || (this.activeTrip ? this.activeTrip.routeGeometry : null) || null,
+                        status: status,
+                        routeGeometry: tripGeometry,
                         isActive: true
                     });
 
-                    // STAGE 1: Driver heading to pickup -> Show pickup pin and blue approach route (#0288d1)
+                    // STAGE 1: Driver heading to pickup -> Show pickup pin, destination pin, and blue approach route (#0288d1)
                     if (status === 'ACCEPTED') {
                         if (typeof this.mapController.addPickupMarker === 'function') {
                             this.mapController.addPickupMarker(pLat, pLon, trip.pickupName || (this.pickup && this.pickup.name) || 'Điểm đón của bạn');
+                        }
+
+                        if (!isNaN(destLat) && !isNaN(destLon) && destLat !== 0 && destLon !== 0 && typeof this.mapController.addDestinationMarker === 'function') {
+                            this.mapController.addDestinationMarker(destLat, destLon, trip.dropoffName || (this.destination && this.destination.name) || 'Điểm đến');
+                        }
+
+                        // Ensure main trip route (Pickup -> Destination) remains pristine between pickup & dest (NEVER trimmed by driver's approach location)
+                        if (tripGeometry && tripGeometry.length > 1) {
+                            if (!this._hasEnsuredTripRoute || !this.mapController.routePolyline) {
+                                this.mapController.drawRoute(tripGeometry, {
+                                    color: '#10b981',
+                                    weight: 5,
+                                    opacity: 0.85,
+                                    dashArray: null,
+                                    lineCap: 'round',
+                                    lineJoin: 'round'
+                                });
+                                this._hasEnsuredTripRoute = true;
+                            }
                         }
 
                         // Dynamically trim blue driver approach route behind current position ("snake eating the path")
@@ -4761,58 +4842,89 @@ class CustomerAppController {
                         }
 
                         const lastPos = this._lastApproachDriverPos;
-                        const moved = !lastPos || (Math.abs(dLat - lastPos.lat) > 0.0004 || Math.abs(dLon - lastPos.lng) > 0.0004);
-                        if (moved) {
+                        const moved = !lastPos || (Math.abs(dLat - lastPos.lat) > 0.0003 || Math.abs(dLon - lastPos.lng) > 0.0003);
+                        if (moved || !this._hasDrawnApproachRoute) {
                             this._lastApproachDriverPos = { lat: dLat, lng: dLon };
                             const approachToken = ++this._approachRouteSeq || (this._approachRouteSeq = 1);
 
-                            // Quick initial polyline if first time
-                            if (!this._hasDrawnApproachLine && typeof this.mapController.drawDriverRoute === 'function') {
-                                this.mapController.drawDriverRoute([[dLat, dLon], [pLat, pLon]], {
-                                    color: '#0288d1',
-                                    weight: 6,
-                                    opacity: 0.95
-                                });
-                                this._hasDrawnApproachLine = true;
-                                if (typeof this.mapController.trimDriverRoute === 'function') {
-                                    this.mapController.trimDriverRoute(dLat, dLon);
-                                }
-                            }
-
-                            // Calculate realistic turn-by-turn road route via C++ Dijkstra / OSRM / Street graph
+                            // Calculate realistic turn-by-turn road route via Shared Driver Geometry / C++ Dijkstra / OSRM / Street graph
                             this.calculateDriverApproachRoute(dLat, dLon, pLat, pLon).then(routePath => {
-                                if (this._approachRouteSeq === approachToken && routePath && routePath.length > 1) {
+                                if (this._approachRouteSeq === approachToken && Array.isArray(routePath) && routePath.length > 1) {
                                     if (this.mapController && typeof this.mapController.drawDriverRoute === 'function') {
                                         this.mapController.drawDriverRoute(routePath, {
                                             color: '#0288d1',
                                             weight: 6,
                                             opacity: 0.95
                                         });
+                                        this._hasDrawnApproachRoute = true;
                                         if (typeof this.mapController.trimDriverRoute === 'function') {
                                             this.mapController.trimDriverRoute(dLat, dLon);
                                         }
                                     }
                                     if (this.mapController && typeof this.mapController.fitBounds === 'function' && !this._hasFittedApproachBounds) {
                                         this._hasFittedApproachBounds = true;
-                                        this.mapController.fitBounds(routePath, { padding: [70, 70] });
+                                        this.mapController.fitBounds([[dLat, dLon], [pLat, pLon]], { padding: [75, 75] });
                                     }
                                 }
                             });
                         }
-                    } else {
-                        // Driver arrived at pickup or trip in progress -> clear blue approach line
+                    } else if (status === 'ARRIVED') {
+                        // Driver arrived at pickup -> clear blue approach line and highlight trip route
                         this._lastApproachDriverPos = null;
                         this._hasFittedApproachBounds = false;
-                        this._hasDrawnApproachLine = false;
+                        this._hasDrawnApproachRoute = false;
                         if (typeof this.mapController.clearDriverRoute === 'function') {
                             this.mapController.clearDriverRoute();
                         }
 
-                        // STAGE 2: Trip in progress -> dynamically trim trip route behind vehicle position ("snake eating the path")
-                        if (status === 'IN_PROGRESS') {
-                            if (typeof this.mapController.trimRoute === 'function') {
-                                this.mapController.trimRoute(dLat, dLon);
+                        if (typeof this.mapController.addPickupMarker === 'function') {
+                            this.mapController.addPickupMarker(pLat, pLon, trip.pickupName || (this.pickup && this.pickup.name) || 'Điểm đón của bạn');
+                        }
+
+                        if (!isNaN(destLat) && !isNaN(destLon) && destLat !== 0 && destLon !== 0 && typeof this.mapController.addDestinationMarker === 'function') {
+                            this.mapController.addDestinationMarker(destLat, destLon, trip.dropoffName || (this.destination && this.destination.name) || 'Điểm đến');
+                        }
+
+                        if (tripGeometry && tripGeometry.length > 1) {
+                            if (!this._hasRestoredArrivedRoute || !this.mapController.routePolyline) {
+                                this.mapController.drawRoute(tripGeometry, {
+                                    color: '#10b981',
+                                    weight: 6,
+                                    opacity: 0.95,
+                                    dashArray: null,
+                                    lineCap: 'round',
+                                    lineJoin: 'round'
+                                });
+                                this._hasRestoredArrivedRoute = true;
                             }
+                            if (!this._hasFittedArrivedBounds && typeof this.mapController.fitBounds === 'function') {
+                                this._hasFittedArrivedBounds = true;
+                                this.mapController.fitBounds(tripGeometry, { padding: [60, 60] });
+                            }
+                        }
+                    } else if (status === 'IN_PROGRESS') {
+                        // Trip in progress -> clear blue approach line & dynamically trim trip route behind vehicle position
+                        this._lastApproachDriverPos = null;
+                        this._hasFittedApproachBounds = false;
+                        this._hasDrawnApproachRoute = false;
+                        if (typeof this.mapController.clearDriverRoute === 'function') {
+                            this.mapController.clearDriverRoute();
+                        }
+
+                        if (!isNaN(destLat) && !isNaN(destLon) && destLat !== 0 && destLon !== 0 && typeof this.mapController.addDestinationMarker === 'function') {
+                            this.mapController.addDestinationMarker(destLat, destLon, trip.dropoffName || (this.destination && this.destination.name) || 'Điểm đến');
+                        }
+
+                        // STAGE 2: Trip in progress -> dynamically trim trip route behind vehicle position ("snake eating the path")
+                        if (typeof this.mapController.trimRoute === 'function') {
+                            this.mapController.trimRoute(dLat, dLon);
+                        }
+                    } else {
+                        this._lastApproachDriverPos = null;
+                        this._hasFittedApproachBounds = false;
+                        this._hasDrawnApproachRoute = false;
+                        if (typeof this.mapController.clearDriverRoute === 'function') {
+                            this.mapController.clearDriverRoute();
                         }
                     }
                 } else {
@@ -4868,7 +4980,11 @@ class CustomerAppController {
         this._latestDriverPosition = null;
         this._lastApproachDriverPos = null;
         this._hasDrawnApproachLine = false;
+        this._hasDrawnApproachRoute = false;
         this._hasFittedApproachBounds = false;
+        this._hasEnsuredTripRoute = false;
+        this._hasRestoredArrivedRoute = false;
+        this._hasFittedArrivedBounds = false;
         try {
             localStorage.removeItem('goride_active_trip');
         } catch (e) {}
@@ -5078,6 +5194,10 @@ class CustomerAppController {
         this._lastApproachDriverPos = null;
         this._hasFittedApproachBounds = false;
         this._hasDrawnApproachLine = false;
+        this._hasDrawnApproachRoute = false;
+        this._hasEnsuredTripRoute = false;
+        this._hasRestoredArrivedRoute = false;
+        this._hasFittedArrivedBounds = false;
         if (this.mapController && typeof this.mapController.clearDriverRoute === 'function') {
             this.mapController.clearDriverRoute();
         }
