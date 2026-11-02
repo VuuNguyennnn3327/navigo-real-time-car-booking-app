@@ -80,3 +80,10 @@ yarn-error.log*
 *.tmp
 *.temp
 *.log
+
+# Exported / Imported test files and sample templates
+*.csv
+*.dat
+data/templates/
+navigo_*.txt
+mau_nhap_*.txt

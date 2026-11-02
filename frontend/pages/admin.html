@@ -164,6 +164,66 @@
         .btn-action-delete:active {
             transform: scale(0.96);
         }
+
+        /* Enterprise File Export / Import Button Styling */
+        .btn-action-export {
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+            color: #15803d;
+            border: 1.5px solid #86efac;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(22, 163, 74, 0.12);
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            user-select: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-action-export:hover {
+            background: #bbf7d0;
+            border-color: #4ade80;
+            color: #14532d;
+            transform: translateY(-1.5px);
+            box-shadow: 0 4px 12px rgba(22, 163, 74, 0.22);
+        }
+        .btn-action-export:active {
+            transform: scale(0.96);
+        }
+
+        .btn-action-import {
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            color: #1d4ed8;
+            border: 1.5px solid #93c5fd;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(37, 99, 235, 0.12);
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            user-select: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-action-import:hover {
+            background: #bfdbfe;
+            border-color: #60a5fa;
+            color: #1e3a8a;
+            transform: translateY(-1.5px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.22);
+        }
+        .btn-action-import:active {
+            transform: scale(0.96);
+        }
+
+        .export-format-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+        }
         /* Modal System */
         .admin-modal-overlay {
             position: fixed;
@@ -981,12 +1041,18 @@
 
                 <!-- TAB: CHUYẾN ĐI GẦN ĐÂY -->
                 <div id="tab-recent-trips" style="display:none; padding:var(--space-4);">
-                    <div class="page-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4);">
+                    <div class="page-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4); flex-wrap:wrap; gap:10px;">
                         <div>
                             <h2>Chuyến đi gần đây</h2>
                             <p style="margin:2px 0 0 0; color:var(--color-gray-600); font-size:0.875rem;">Theo dõi danh sách các chuyến đi mới nhất vừa phát sinh theo thời gian thực (100% dữ liệu thực).</p>
                         </div>
-                        <div style="display:flex; gap:8px;">
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button type="button" class="btn-action-export" onclick="adminController.openExportModal('trips')" title="Xuất danh sách chuyến đi ra file (.csv, .txt, .dat)">
+                                <span>📤</span> <strong>Xuất file</strong>
+                            </button>
+                            <button type="button" class="btn-action-import" onclick="adminController.openImportModal('trips')" title="Nhập dữ liệu chuyến đi từ file (.csv, .txt, .dat)">
+                                <span>📥</span> <strong>Nhập file</strong>
+                            </button>
                             <button class="btn btn-secondary btn-sm" onclick="adminController.loadRecentTripsTable()" style="display:flex; align-items:center; gap:6px;">
                                 <span>🔄</span> <strong>Làm mới</strong>
                             </button>
@@ -1032,14 +1098,22 @@
 
                 <!-- TAB 2: QUẢN LÝ CHUYẾN ĐI (FULL CRUD) -->
                 <div id="tab-trips" style="display:none; padding:var(--space-4);">
-                    <div class="page-header">
+                    <div class="page-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4); flex-wrap:wrap; gap:10px;">
                         <div>
                             <h2>Quản lý chuyến đi</h2>
                             <p style="margin:2px 0 0 0; color:var(--color-gray-600); font-size:0.875rem;">Thêm mới, chỉnh sửa thông tin, cập nhật trạng thái hoặc xóa chuyến đi.</p>
                         </div>
-                        <button class="btn btn-primary btn-sm" onclick="adminController.openAddTripModal()" style="display:flex; align-items:center; gap:6px;">
-                            <span>➕</span> <strong>Thêm chuyến đi mới</strong>
-                        </button>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button type="button" class="btn-action-export" onclick="adminController.openExportModal('trips')" title="Xuất danh sách chuyến đi ra file (.csv, .txt, .dat)">
+                                <span>📤</span> <strong>Xuất file</strong>
+                            </button>
+                            <button type="button" class="btn-action-import" onclick="adminController.openImportModal('trips')" title="Nhập dữ liệu chuyến đi từ file (.csv, .txt, .dat)">
+                                <span>📥</span> <strong>Nhập file</strong>
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="adminController.openAddTripModal()" style="display:flex; align-items:center; gap:6px;">
+                                <span>➕</span> <strong>Thêm chuyến đi mới</strong>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Search & Filters -->
@@ -1081,18 +1155,24 @@
 
                 <!-- TAB 3: QUẢN LÝ TÀI XẾ (FULL CRUD + PHÊ DUYỆT) -->
                 <div id="tab-drivers" style="display:none; padding:var(--space-4);">
-                    <div class="page-header">
+                    <div class="page-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4); flex-wrap:wrap; gap:10px;">
                         <div>
                             <h2>Quản lý tài xế</h2>
                             <p style="margin:2px 0 0 0; color:var(--color-gray-600); font-size:0.875rem;">Phê duyệt hồ sơ đăng ký mới, quản lý thông tin và trạng thái hoạt động của tài xế.</p>
                         </div>
-                        <div style="display:flex; gap:8px;">
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button type="button" class="btn-action-export" onclick="adminController.openExportModal('drivers')" title="Xuất danh sách tài xế ra file (.csv, .txt, .dat)">
+                                <span>📤</span> <strong>Xuất file tài xế</strong>
+                            </button>
+                            <button type="button" class="btn-action-import" onclick="adminController.openImportModal('drivers')" title="Nhập dữ liệu tài xế từ file (.csv, .txt, .dat)">
+                                <span>📥</span> <strong>Nhập file tài xế</strong>
+                            </button>
                             <button class="btn btn-primary btn-sm" onclick="adminController.quickBroadcast('driver')" style="display:flex; align-items:center; gap:6px; background:linear-gradient(135deg, #00b1a9, #0f2d3c); border:none;">
                                 <span>📢</span> <strong>Gửi thông báo tới tài xế</strong>
                             </button>
                             <button class="btn btn-primary btn-sm" onclick="adminController.openAddDriverModal()" style="display:flex; align-items:center; gap:6px;">
-                            <span>➕</span> <strong>Thêm tài xế mới</strong>
-                        </button>
+                                <span>➕</span> <strong>Thêm tài xế mới</strong>
+                            </button>
                         </div>
                     </div>
 
@@ -1152,7 +1232,13 @@
                                 Danh sách tài khoản khách hàng, thống kê số cuốc xe, phân quyền Quản trị viên và xóa dữ liệu triệt để.
                             </p>
                         </div>
-                        <div style="display:flex; gap:10px;">
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button type="button" class="btn-action-export" onclick="adminController.openExportModal('customers')" title="Xuất danh sách khách hàng ra file (.csv, .txt, .dat)">
+                                <span>📤</span> <strong>Xuất file khách hàng</strong>
+                            </button>
+                            <button type="button" class="btn-action-import" onclick="adminController.openImportModal('customers')" title="Nhập dữ liệu khách hàng từ file (.csv, .txt, .dat)">
+                                <span>📥</span> <strong>Nhập file khách hàng</strong>
+                            </button>
                             <button class="btn btn-primary" onclick="adminController.quickBroadcast('customer')" style="background:linear-gradient(135deg, #00b1a9, #0f2d3c); border:none; display:flex; align-items:center; gap:6px;">
                                 <span>📢</span> Gửi thông báo đến khách hàng
                             </button>
@@ -1610,6 +1696,129 @@
                 <div class="admin-modal-footer">
                     <button type="button" class="btn btn-ghost" onclick="adminController.closeModal('modal-delete')">Hủy bỏ</button>
                     <button type="button" class="btn btn-danger" id="btn-confirm-delete">Xác nhận xóa</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL 4: DATA EXPORT (CSV / TXT / DAT) -->
+        <div class="admin-modal-overlay" id="modal-data-export">
+            <div class="admin-modal-card" style="max-width:540px; border-radius:18px; box-shadow:0 24px 38px rgba(15, 23, 42, 0.25);">
+                <div class="admin-modal-header" style="background:linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border-bottom:1px solid #bbf7d0; padding:18px 24px;">
+                    <h3 style="color:#15803d; display:flex; align-items:center; gap:10px; margin:0; font-size:1.18rem;">
+                        <span style="font-size:1.4rem;">📤</span> Xuất dữ liệu: <span id="export-entity-title" style="color:#0f2d3c; font-weight:800;">Chuyến đi</span>
+                    </h3>
+                    <button type="button" class="admin-modal-close" onclick="adminController.closeModal('modal-data-export')" style="font-size:1.6rem; color:#64748b;">&times;</button>
+                </div>
+                <div class="admin-modal-body" style="padding:22px 24px;">
+                    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:12px 16px; margin-bottom:18px; display:flex; align-items:center; justify-content:space-between;">
+                        <span style="font-size:0.86rem; color:#475569; font-weight:600;">Tổng số bản ghi sẵn sàng xuất:</span>
+                        <span id="export-entity-count-badge" class="badge" style="background:#dcfce7; color:#15803d; font-weight:800; font-size:0.86rem; padding:4px 12px; border-radius:9999px;">0 bản ghi</span>
+                    </div>
+
+                    <div style="margin-bottom:18px;">
+                        <label style="display:block; font-weight:700; font-size:0.88rem; color:#1e293b; margin-bottom:10px;">
+                            Chọn định dạng tệp muốn xuất:
+                        </label>
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+                            <label class="export-format-card" id="card-format-csv" style="border:2px solid #00b1a9; background:#f0fdfa; border-radius:12px; padding:12px 10px; cursor:pointer; text-align:center; transition:all 0.2s;">
+                                <input type="radio" name="export-format-radio" value="csv" checked style="display:none;" onchange="adminController.onExportFormatChange('csv')">
+                                <div style="font-size:1.6rem; margin-bottom:4px;">📊</div>
+                                <div style="font-weight:800; font-size:0.92rem; color:#0f2d3c;">CSV (.csv)</div>
+                                <div style="font-size:0.7rem; color:#007d77; margin-top:2px;">Mở Excel / Sheets</div>
+                            </label>
+                            <label class="export-format-card" id="card-format-txt" style="border:2px solid #e2e8f0; background:#ffffff; border-radius:12px; padding:12px 10px; cursor:pointer; text-align:center; transition:all 0.2s;">
+                                <input type="radio" name="export-format-radio" value="txt" style="display:none;" onchange="adminController.onExportFormatChange('txt')">
+                                <div style="font-size:1.6rem; margin-bottom:4px;">📄</div>
+                                <div style="font-weight:800; font-size:0.92rem; color:#0f2d3c;">TXT (.txt)</div>
+                                <div style="font-size:0.7rem; color:#64748b; margin-top:2px;">Bảng cột Tab UTF-8</div>
+                            </label>
+                            <label class="export-format-card" id="card-format-dat" style="border:2px solid #e2e8f0; background:#ffffff; border-radius:12px; padding:12px 10px; cursor:pointer; text-align:center; transition:all 0.2s;">
+                                <input type="radio" name="export-format-radio" value="dat" style="display:none;" onchange="adminController.onExportFormatChange('dat')">
+                                <div style="font-size:1.6rem; margin-bottom:4px;">💾</div>
+                                <div style="font-weight:800; font-size:0.92rem; color:#0f2d3c;">DAT (.dat)</div>
+                                <div style="font-size:0.7rem; color:#64748b; margin-top:2px;">Cấu trúc phân tách</div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <span style="font-weight:700; font-size:0.8rem; color:#475569;">Xem trước cấu trúc nội dung xuất:</span>
+                            <span id="export-preview-format-tag" style="font-size:0.72rem; font-family:monospace; background:#e2e8f0; padding:2px 8px; border-radius:4px; font-weight:700; color:#334155;">Định dạng: CSV</span>
+                        </div>
+                        <pre id="export-preview-box" style="background:#0f172a; color:#38bdf8; font-family:'Courier New', Consolas, monospace; padding:12px 14px; border-radius:10px; font-size:0.75rem; max-height:180px; overflow-x:auto; overflow-y:auto; line-height:1.45; margin:0; border:1px solid #1e293b; white-space:pre;"></pre>
+                    </div>
+                </div>
+                <div class="admin-modal-footer" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px;">
+                    <button type="button" class="btn btn-ghost" onclick="adminController.closeModal('modal-data-export')">Hủy bỏ</button>
+                    <button type="button" class="btn btn-primary" onclick="adminController.executeExport()" style="background:linear-gradient(135deg, #16a34a 0%, #15803d 100%); border:none; display:inline-flex; align-items:center; gap:8px; font-weight:800; padding:9px 20px; box-shadow:0 4px 12px rgba(22, 163, 74, 0.28);">
+                        <span>🚀</span> Tải tệp về máy
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL 5: DATA IMPORT (CSV / TXT / DAT) -->
+        <div class="admin-modal-overlay" id="modal-data-import">
+            <div class="admin-modal-card" style="max-width:680px; border-radius:18px; box-shadow:0 24px 38px rgba(15, 23, 42, 0.25);">
+                <div class="admin-modal-header" style="background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-bottom:1px solid #bfdbfe; padding:18px 24px;">
+                    <h3 style="color:#1d4ed8; display:flex; align-items:center; gap:10px; margin:0; font-size:1.18rem;">
+                        <span style="font-size:1.4rem;">📥</span> Nhập dữ liệu: <span id="import-entity-title" style="color:#0f2d3c; font-weight:800;">Chuyến đi</span>
+                    </h3>
+                    <button type="button" class="admin-modal-close" onclick="adminController.closeModal('modal-data-import')" style="font-size:1.6rem; color:#64748b;">&times;</button>
+                </div>
+                <div class="admin-modal-body" style="padding:22px 24px; max-height:78vh; overflow-y:auto;">
+                    <!-- Template Download helper banner -->
+                    <div style="background:linear-gradient(135deg, #f0fdfa 0%, #e6fffa 100%); border:1.5px dashed #00b1a9; border-radius:12px; padding:12px 18px; margin-bottom:18px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                        <div>
+                            <div style="font-weight:700; color:#0f2d3c; font-size:0.88rem;">📄 Tải tệp mẫu chuẩn trước khi nhập:</div>
+                            <div style="font-size:0.76rem; color:#007d77; margin-top:2px;">Cấu trúc file nhập và xuất hoàn toàn đồng bộ, giúp bạn nhập liệu nhanh chóng và chính xác.</div>
+                        </div>
+                        <div style="display:flex; gap:6px;">
+                            <button type="button" class="btn btn-sm btn-ghost" onclick="adminController.downloadTemplateFile('csv')" style="background:#fff; border:1px solid #cbd5e1; font-weight:700; font-size:0.76rem; padding:4px 10px;">Mẫu .CSV</button>
+                            <button type="button" class="btn btn-sm btn-ghost" onclick="adminController.downloadTemplateFile('txt')" style="background:#fff; border:1px solid #cbd5e1; font-weight:700; font-size:0.76rem; padding:4px 10px;">Mẫu .TXT</button>
+                            <button type="button" class="btn btn-sm btn-ghost" onclick="adminController.downloadTemplateFile('dat')" style="background:#fff; border:1px solid #cbd5e1; font-weight:700; font-size:0.76rem; padding:4px 10px;">Mẫu .DAT</button>
+                        </div>
+                    </div>
+
+                    <!-- Drop Zone -->
+                    <input type="file" id="admin-import-file-input" accept=".csv,.txt,.dat" style="display:none;" onchange="adminController.onImportFileSelected(event)">
+                    <div id="admin-import-dropzone" onclick="document.getElementById('admin-import-file-input').click()" style="border:2px dashed #94a3b8; border-radius:14px; padding:26px 20px; text-align:center; background:#f8fafc; cursor:pointer; transition:all 0.22s cubic-bezier(0.16, 1, 0.3, 1);">
+                        <div style="font-size:2.4rem; margin-bottom:6px;">📂</div>
+                        <div style="font-weight:700; font-size:0.95rem; color:#1e293b;">Bấm vào đây để chọn tệp từ máy tính</div>
+                        <div style="font-size:0.78rem; color:#64748b; margin-top:4px;">Hỗ trợ định dạng <strong>.CSV</strong>, <strong>.TXT</strong> hoặc <strong>.DAT</strong> (Dung lượng tối đa 10MB)</div>
+                    </div>
+
+                    <!-- Selected File Info & Live Preview -->
+                    <div id="import-preview-wrapper" style="display:none; margin-top:18px;">
+                        <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:12px 16px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between;">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span style="font-size:1.4rem;">📄</span>
+                                <div>
+                                    <div id="import-file-name" style="font-weight:800; font-size:0.88rem; color:#0f2d3c;">--</div>
+                                    <div id="import-file-meta" style="font-size:0.74rem; color:#64748b;">--</div>
+                                </div>
+                            </div>
+                            <span id="import-summary-badge" class="badge" style="background:#dcfce7; color:#15803d; font-weight:800; font-size:0.8rem; padding:4px 10px; border-radius:9999px;">Đã sẵn sàng</span>
+                        </div>
+
+                        <div style="font-weight:700; font-size:0.82rem; color:#475569; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                            <span>Bảng xem trước dữ liệu (3 dòng đầu):</span>
+                            <span id="import-row-count-text" style="font-size:0.75rem; color:#00b1a9; font-weight:700;">0 dòng phát hiện</span>
+                        </div>
+                        <div id="import-preview-table-container" style="max-height:170px; overflow-x:auto; overflow-y:auto; border:1px solid #e2e8f0; border-radius:10px; background:#fff;">
+                            <!-- Dynamic preview table -->
+                        </div>
+                    </div>
+                </div>
+                <div class="admin-modal-footer" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="font-size:0.78rem; color:#64748b;" id="import-footer-hint">Chọn tệp để xem trước trước khi nạp.</div>
+                    <div style="display:flex; gap:10px;">
+                        <button type="button" class="btn btn-ghost" onclick="adminController.closeModal('modal-data-import')">Hủy bỏ</button>
+                        <button type="button" class="btn btn-primary" id="btn-submit-import" onclick="adminController.executeImport()" disabled style="background:linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); border:none; display:inline-flex; align-items:center; gap:8px; font-weight:800; padding:9px 20px; box-shadow:0 4px 12px rgba(37, 99, 235, 0.28);">
+                            <span>✅</span> Xác nhận nạp vào hệ thống
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
