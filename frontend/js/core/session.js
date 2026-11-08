@@ -336,7 +336,32 @@ class SessionManager {
         this.currentUser = null;
         this.token = null;
         this._isLoggedOut = false;
+        this._presenceTimer = null;
         this._initFromStorage();
+        this._startPresenceHeartbeat();
+    }
+
+    _startPresenceHeartbeat() {
+        if (typeof window === 'undefined') return;
+        const sendBeat = () => {
+            const user = this.getCurrentUser();
+            if (user && user.id && !this._isLoggedOut) {
+                if (typeof window.realtimeSync !== 'undefined' && typeof window.realtimeSync.setUserPresence === 'function') {
+                    window.realtimeSync.setUserPresence(user.id, true, user);
+                }
+            }
+        };
+
+        sendBeat();
+        if (this._presenceTimer) clearInterval(this._presenceTimer);
+        this._presenceTimer = setInterval(sendBeat, 30000);
+
+        window.addEventListener('beforeunload', () => {
+            const user = this.getCurrentUser();
+            if (user && user.id && typeof window.realtimeSync !== 'undefined' && typeof window.realtimeSync.setUserPresence === 'function') {
+                window.realtimeSync.setUserPresence(user.id, true, user);
+            }
+        });
     }
 
     /**
@@ -404,24 +429,24 @@ class SessionManager {
             // If a valid user session is found, RESTORE IT AND KEEP IT ALIVE!
             if (rawUser && isValidUserJson(rawUser)) {
                 const parsedUser = JSON.parse(rawUser);
+
+                // Kiểm tra xem tài khoản có bị XÓA hoặc KHÓA không
                 try {
-                    const deleted = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
-                    const delSet = new Set(deleted.map(x => String(x).toLowerCase().trim()));
-                    const uid = parsedUser.id ? String(parsedUser.id).toLowerCase().trim() : '';
-                    const uemail = parsedUser.email ? String(parsedUser.email).toLowerCase().trim() : '';
-                    const uphone = parsedUser.phone ? String(parsedUser.phone).replace(/\D/g, '') : '';
-                    if ((uid && delSet.has(uid)) || (uemail && delSet.has(uemail)) || (uphone && delSet.has(uphone))) {
-                        this.currentUser = null;
-                        this.token = null;
-                        try {
-                            localStorage.removeItem('goride_user');
-                            localStorage.removeItem('navigo_user');
-                            localStorage.removeItem('ride_rtree_user');
-                            sessionStorage.removeItem(SESSION_STORAGE_KEYS.USER);
-                        } catch(e) {}
+                    const deletedIds = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
+                    const lockedIds = JSON.parse(localStorage.getItem('goride_locked_user_ids') || '[]');
+                    const uid = parsedUser.id;
+                    const uemail = parsedUser.email?.toLowerCase();
+                    const uphone = parsedUser.phone?.replace(/\D/g, '');
+
+                    if (deletedIds.some(id => id === uid || id === uemail || (uphone && id === uphone))) {
+                        setTimeout(() => this.forceLogout('Tài khoản của bạn đã bị xóa khỏi hệ thống.'), 50);
                         return;
                     }
-                } catch (e) {}
+                    if (parsedUser.status === 'locked' || lockedIds.some(id => id === uid || id === uemail || (uphone && id === uphone))) {
+                        setTimeout(() => this.forceLogout('Tài khoản này đã bị khóa do vi phạm.'), 50);
+                        return;
+                    }
+                } catch (checkErr) {}
 
                 this.currentUser = parsedUser;
                 this.token = token || ('token_' + Date.now());
@@ -483,27 +508,6 @@ class SessionManager {
             throw new Error('Invalid user data provided to login()');
         }
 
-        if (userData.status === 'locked') {
-            const err = new Error('Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.');
-            err.code = 'ACCOUNT_LOCKED';
-            throw err;
-        }
-
-        try {
-            const deleted = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
-            const delSet = new Set(deleted.map(x => String(x).toLowerCase().trim()));
-            const uid = userData.id ? String(userData.id).toLowerCase().trim() : '';
-            const uemail = userData.email ? String(userData.email).toLowerCase().trim() : '';
-            const uphone = userData.phone ? String(userData.phone).replace(/\D/g, '') : '';
-            if ((uid && delSet.has(uid)) || (uemail && delSet.has(uemail)) || (uphone && delSet.has(uphone))) {
-                const err = new Error('Tài khoản này đã bị xóa vĩnh viễn khỏi hệ thống Navigo.');
-                err.code = 'ACCOUNT_DELETED';
-                throw err;
-            }
-        } catch (delErr) {
-            if (delErr.code === 'ACCOUNT_DELETED') throw delErr;
-        }
-
         try {
             localStorage.removeItem('goride_logged_out');
         } catch (e) {}
@@ -539,6 +543,11 @@ class SessionManager {
 
         // Dispatch events for reactive UI updates
         this._dispatchAuthEvents('login', this.currentUser);
+
+        if (typeof window !== 'undefined' && window.realtimeSync && typeof window.realtimeSync.setUserPresence === 'function') {
+            window.realtimeSync.setUserPresence(this.currentUser.id, true, this.currentUser);
+        }
+        this._startPresenceHeartbeat();
 
         return this.currentUser;
     }
@@ -617,11 +626,36 @@ class SessionManager {
             console.error('[SessionManager] Error clearing storage:', error);
         }
 
+        if (this._presenceTimer) {
+            clearInterval(this._presenceTimer);
+            this._presenceTimer = null;
+        }
+        if (previousUser && previousUser.id && typeof window !== 'undefined' && window.realtimeSync && typeof window.realtimeSync.setUserPresence === 'function') {
+            window.realtimeSync.setUserPresence(previousUser.id, false, previousUser);
+        }
+
         if (typeof apiClient !== 'undefined' && apiClient) {
             apiClient.clearAuthToken();
         }
 
         this._dispatchAuthEvents('logout', null, previousUser);
+    }
+
+    /**
+     * Cưỡng chế đăng xuất ngay lập tức khi tài khoản bị Khóa hoặc bị Xóa
+     * @param {string} reason - Thông điệp hiển thị cho người dùng
+     */
+    forceLogout(reason = 'Tài khoản này đã bị khóa do vi phạm.') {
+        try {
+            this.logout();
+            sessionStorage.clear();
+            localStorage.setItem('navigo_lock_notice', reason);
+            localStorage.setItem('goride_logged_out', '1');
+        } catch (e) {}
+
+        const isPagesDir = /[\/\\]pages[\/\\]/i.test(window.location.pathname) || window.location.pathname.includes('/pages/');
+        const loginUrl = `${isPagesDir ? '' : 'pages/'}login.html?locked=1`;
+        window.location.href = loginUrl;
     }
 
     /**
@@ -1872,3 +1906,28 @@ document.addEventListener('click', (e) => {
         window.location.href = loginTarget;
     }
 }, true);
+
+// Cross-tab Instant Force Logout Listener (for Locked or Deleted Accounts)
+window.addEventListener('storage', (e) => {
+    if (e.key === 'goride_force_logout_event' && e.newValue) {
+        try {
+            const data = JSON.parse(e.newValue);
+            const curUser = (typeof sessionManager !== 'undefined') ? sessionManager.getUser() : null;
+            if (curUser && data) {
+                const cleanCurPhone = (curUser.phone || '').toString().replace(/\D/g, '');
+                const cleanTargetPhone = (data.userPhone || '').toString().replace(/\D/g, '');
+                const isMatch = (data.userId && (curUser.id === data.userId || curUser.userId === data.userId)) ||
+                                (data.userEmail && curUser.email && curUser.email.toLowerCase() === data.userEmail.toLowerCase()) ||
+                                (cleanTargetPhone && cleanCurPhone && (cleanCurPhone === cleanTargetPhone || cleanCurPhone.endsWith(cleanTargetPhone) || cleanTargetPhone.endsWith(cleanCurPhone)));
+                if (isMatch) {
+                    const msg = (data.reason === 'deleted')
+                        ? 'Tài khoản của bạn đã bị xóa khỏi hệ thống.'
+                        : 'Tài khoản này đã bị khóa do vi phạm.';
+                    if (typeof sessionManager !== 'undefined') {
+                        sessionManager.forceLogout(msg);
+                    }
+                }
+            }
+        } catch (err) {}
+    }
+});

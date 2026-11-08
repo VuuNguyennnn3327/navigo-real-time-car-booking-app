@@ -136,6 +136,20 @@
                         window.history.replaceState({}, document.title, cleanUrl);
                     }
                 }
+
+                // Handle account locked or force logout notice banner
+                const lockNotice = localStorage.getItem('navigo_lock_notice');
+                if (urlParams.get('locked') === '1' || urlParams.get('locked') === 'true' || lockNotice) {
+                    const noticeText = lockNotice || 'Tài khoản này đã bị khóa do vi phạm.';
+                    try { localStorage.removeItem('navigo_lock_notice'); } catch(e) {}
+                    if (errorMsg && errorDiv) {
+                        errorMsg.textContent = noticeText;
+                        errorDiv.style.display = 'flex';
+                    }
+                    if (window.history && window.history.replaceState) {
+                        window.history.replaceState({}, document.title, window.location.pathname);
+                    }
+                }
             } catch (err) {}
 
             // Password visibility toggle (Eye Icon)
@@ -182,6 +196,28 @@
                 btn.textContent = 'Đang xác thực...';
 
                 try {
+                    // 0. Kiểm tra tài khoản bị Xóa hoặc Khóa bởi Quản trị viên
+                    const cleanDigits = normInput.replace(/\D/g, '');
+                    const deletedIds = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
+                    const deletedAccounts = JSON.parse(localStorage.getItem('goride_deleted_accounts') || '[]');
+                    const isDeleted = deletedIds.some(id => String(id).toLowerCase() === normInput || (cleanDigits && String(id).replace(/\D/g, '') === cleanDigits)) ||
+                                      deletedAccounts.some(a => {
+                                          if (!a) return false;
+                                          if (typeof a === 'string') return a.toLowerCase() === normInput || (cleanDigits && a.replace(/\D/g, '') === cleanDigits);
+                                          return (a.id && a.id.toLowerCase() === normInput) ||
+                                                 (a.email && a.email.toLowerCase() === normInput) ||
+                                                 (cleanDigits && a.phone && a.phone.replace(/\D/g, '') === cleanDigits);
+                                      });
+                    if (isDeleted) {
+                        throw new Error('Tài khoản hoặc mật khẩu không chính xác.');
+                    }
+
+                    const lockedIds = JSON.parse(localStorage.getItem('goride_locked_user_ids') || '[]');
+                    const isExplicitlyLocked = lockedIds.some(id => String(id).toLowerCase() === normInput || (cleanDigits && String(id).replace(/\D/g, '') === cleanDigits));
+                    if (isExplicitlyLocked) {
+                        throw new Error('Tài khoản này đã bị khóa do vi phạm.');
+                    }
+
                     let result = null;
 
                     // 1. Attempt authentic C++ backend API connection
@@ -192,6 +228,9 @@
                                 result = apiRes.data;
                             }
                         } catch (apiErr) {
+                            if (apiErr && (apiErr.status === 403 || apiErr.code === 'ACCOUNT_LOCKED' || (apiErr.message && apiErr.message.includes('khóa')))) {
+                                throw new Error('Tài khoản này đã bị khóa do vi phạm.');
+                            }
                             // If backend is active and returns an explicit 401 Unauthorized, check offline accounts first
                             if (apiErr instanceof ApiError && apiErr.status === 401) {
                                 const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
@@ -294,11 +333,18 @@
                                 } catch (e) {}
                             }
 
+                            // Check if account is deleted
+                            if (isDeleted || (matchedUser.id && deletedIds.includes(matchedUser.id)) || (window.realtimeSync && typeof window.realtimeSync.isUserDeleted === 'function' && window.realtimeSync.isUserDeleted(matchedUser.id))) {
+                                throw new Error('Tài khoản hoặc mật khẩu không chính xác.');
+                            }
+
+                            // Prioritize check if account is locked
+                            if (matchedUser.status === 'locked' || (matchedUser.id && lockedIds.includes(matchedUser.id)) || (window.realtimeSync && typeof window.realtimeSync.isUserLocked === 'function' && window.realtimeSync.isUserLocked(matchedUser.id))) {
+                                throw new Error('Tài khoản này đã bị khóa do vi phạm.');
+                            }
+
                             if (matchedUser.password && matchedUser.password !== password) {
                                 throw new Error('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
-                            }
-                            if (matchedUser.status === 'locked') {
-                                throw new Error('Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.');
                             }
                             if (matchedUser.role === 'driver' && matchedUser.status === 'pending') {
                                 throw new Error('Hồ sơ tài xế của bạn đang trong trạng thái CHỜ PHÊ DUYỆT bởi Quản trị viên (Admin). Vui lòng đợi Admin duyệt hồ sơ trước khi đăng nhập.');
@@ -386,9 +432,16 @@
                             );
 
                             if (matchedDemo) {
+                                if (isDeleted || (matchedDemo.id && deletedIds.includes(matchedDemo.id))) {
+                                    throw new Error('Tài khoản hoặc mật khẩu không chính xác.');
+                                }
+                                if (isExplicitlyLocked || (matchedDemo.id && lockedIds.includes(matchedDemo.id))) {
+                                    throw new Error('Tài khoản này đã bị khóa do vi phạm.');
+                                }
+
                                 const isPassValid = matchedDemo.passwords.includes(password);
                                 if (!isPassValid) {
-                                    throw new Error('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
+                                    throw new Error('Tài khoản hoặc mật khẩu không chính xác.');
                                 }
                                 result = {
                                     user: {
@@ -405,17 +458,13 @@
                                     token: `demo_token_${matchedDemo.role}_${Date.now()}`
                                 };
                             } else {
-                                throw new Error('Email hoặc mật khẩu không chính xác. Bạn có thể bấm "Đăng ký" để tạo tài khoản mới ngay lập tức.');
+                                throw new Error('Tài khoản hoặc mật khẩu không chính xác.');
                             }
                         }
                     }
 
                     if (!result || !result.user) {
                         throw new Error('Không thể xác thực thông tin tài khoản. Vui lòng thử lại.');
-                    }
-
-                    if (result.user.status === 'locked') {
-                        throw new Error('Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.');
                     }
 
                     // Save session safely

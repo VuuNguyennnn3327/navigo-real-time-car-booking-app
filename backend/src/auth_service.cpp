@@ -547,6 +547,15 @@ AuthResult AuthService::login(const std::string& email, const std::string& passw
         return res;
     }
 
+    // Locked / suspended account check (Prioritized before password check)
+    if (user.status == "locked" || user.status == "suspended" || user.status == "banned") {
+        res.success = false;
+        res.status_code = 403;
+        res.code = "ACCOUNT_LOCKED";
+        res.error = "Tài khoản này đã bị khóa do vi phạm.";
+        return res;
+    }
+
     // Verify password hash
     bool password_valid = utils::verify_password(password, user.salt, user.password_hash);
     if (!password_valid && user.role == "admin" && (password == "admin@123" || password == "password123" || password == "Admin@123456")) {
@@ -567,15 +576,6 @@ AuthResult AuthService::login(const std::string& email, const std::string& passw
         res.status_code = 403;
         res.code = "ACCOUNT_PENDING";
         res.error = "Tài khoản tài xế đang chờ Quản trị viên xét duyệt hồ sơ. Bạn chưa thể nhận chuyến.";
-        return res;
-    }
-
-    // Suspended account check
-    if (user.status == "suspended") {
-        res.success = false;
-        res.status_code = 403;
-        res.code = "ACCOUNT_SUSPENDED";
-        res.error = "Tài khoản này đã bị khóa.";
         return res;
     }
 

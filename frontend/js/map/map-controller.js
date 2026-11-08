@@ -659,10 +659,11 @@
       if (!metadata) return 'car4';
       if (typeof metadata === 'string') {
         const s = metadata.toLowerCase().trim();
-        if (s === 'delivery' || s.includes('giao hàng') || s.includes('giao hang') || s.includes('delivery') || s.includes('package') || s.includes('box') || s.includes('shipper')) return 'delivery';
-        if (s === 'bike' || s === 'motorbike' || s === 'moto' || s === 'scooter' || s.includes('xe máy') || s.includes('xe may') || s.includes('gobike') || s.includes('navigo bike') || s.includes('xanh sm bike') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
-        if (s === 'car7' || s === 'xl' || s === '7seats' || s.includes('7 chỗ') || s.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
-        if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || s.includes('sang') || s.includes('luxury') || s.includes('vip')) return 'premium';
+        const unacc = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (s === 'delivery' || unacc.includes('giao hang') || s.includes('delivery') || s.includes('package') || s.includes('box') || s.includes('shipper')) return 'delivery';
+        if (s === 'bike' || s === 'motorbike' || s === 'moto' || s === 'scooter' || unacc.includes('xe may') || s.includes('gobike') || s.includes('navigo bike') || s.includes('xanh sm bike') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
+        if (s === 'car7' || s === 'xl' || s === '7seats' || unacc.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
+        if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || unacc.includes('xe sang') || s.includes('luxury') || s.includes('vip')) return 'premium';
         return 'car4';
       }
       const candidates = [
@@ -673,16 +674,16 @@
         metadata.type,
         metadata.rideType,
         metadata.vehicleModel,
-        (typeof metadata.vehicle === 'object' ? metadata.vehicle?.type : metadata.vehicle),
+        (typeof metadata.vehicle === 'object' ? (metadata.vehicle?.type || metadata.vehicle?.model) : metadata.vehicle),
         metadata.name
       ];
       for (const val of candidates) {
         if (!val || typeof val !== 'string') continue;
         const lower = val.toLowerCase().trim();
+        const unacc = lower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         if (
           lower === 'delivery' ||
-          lower.includes('giao hàng') ||
-          lower.includes('giao hang') ||
+          unacc.includes('giao hang') ||
           lower.includes('delivery') ||
           lower.includes('package') ||
           lower.includes('box') ||
@@ -695,8 +696,7 @@
           lower === 'motorbike' ||
           lower === 'moto' ||
           lower === 'scooter' ||
-          lower.includes('xe máy') ||
-          lower.includes('xe may') ||
+          unacc.includes('xe may') ||
           lower.includes('gobike') ||
           lower.includes('navigo bike') || lower.includes('xanh sm bike') || lower.includes('feliz') || lower.includes('evo') || lower.includes('klara')
         ) {
@@ -706,8 +706,7 @@
           lower === 'car7' ||
           lower === 'xl' ||
           lower === '7seats' ||
-          lower.includes('7 chỗ') ||
-          lower.includes('7 cho') ||
+          unacc.includes('7 cho') ||
           lower.includes('navigo xl') || lower.includes('xanh sm taxi 7') || lower.includes('vf 9') ||
           lower.includes('xpander') ||
           lower.includes('innova')
@@ -719,7 +718,7 @@
           lower === 'car4_plus' ||
           lower === 'plus' ||
           lower === 'luxury' ||
-          lower.includes('xe sang') ||
+          unacc.includes('xe sang') ||
           lower.includes('navigo plus') || lower.includes('xanh sm luxury') || lower.includes('vf 8') ||
           lower.includes('camry') ||
           lower.includes('mercedes')
@@ -1009,14 +1008,20 @@
       }
 
       const icon = this._createPickupIcon();
+      const isDraggable = !this.isTripActive;
+      const markerTitle = this.isTripActive ? 'Điểm đón (Cố định trong suốt chuyến đi)' : 'Điểm đón (Kéo ghim để đổi vị trí)';
       const marker = L.marker([numLat, numLng], {
         icon,
-        title: 'Điểm đón (Kéo ghim để đổi vị trí)',
+        title: markerTitle,
         riseOnHover: true,
-        draggable: true
+        draggable: isDraggable
       });
 
       marker.on('dragend', (e) => {
+        if (this.isTripActive) {
+          marker.setLatLng([numLat, numLng]);
+          return;
+        }
         const pos = e.target.getLatLng();
         if (typeof this.onPickupDragEnd === 'function') {
           this.onPickupDragEnd(pos.lat, pos.lng);
@@ -1059,14 +1064,20 @@
       }
 
       const icon = this._createDestinationIcon();
+      const isDraggable = !this.isTripActive;
+      const markerTitle = this.isTripActive ? 'Điểm đến (Cố định trong suốt chuyến đi)' : 'Điểm đến (Kéo ghim để đổi vị trí)';
       const marker = L.marker([numLat, numLng], {
         icon,
-        title: 'Điểm đến (Kéo ghim để đổi vị trí)',
+        title: markerTitle,
         riseOnHover: true,
-        draggable: true
+        draggable: isDraggable
       });
 
       marker.on('dragend', (e) => {
+        if (this.isTripActive) {
+          marker.setLatLng([numLat, numLng]);
+          return;
+        }
         const pos = e.target.getLatLng();
         if (typeof this.onDestinationDragEnd === 'function') {
           this.onDestinationDragEnd(pos.lat, pos.lng);
@@ -1088,6 +1099,38 @@
 
       this.markers.destination = marker;
       return marker;
+    }
+
+    /**
+     * Khóa hoặc mở khóa khả năng di dời điểm đón & điểm đến khi cuốc xe đang hoạt động
+     * @param {boolean} isActive
+     */
+    setTripActive(isActive) {
+      this.isTripActive = !!isActive;
+      if (this.markers.pickup) {
+        if (this.markers.pickup.dragging) {
+          if (this.isTripActive) {
+            this.markers.pickup.dragging.disable();
+          } else {
+            this.markers.pickup.dragging.enable();
+          }
+        }
+        if (this.markers.pickup.options) {
+          this.markers.pickup.options.draggable = !this.isTripActive;
+        }
+      }
+      if (this.markers.destination) {
+        if (this.markers.destination.dragging) {
+          if (this.isTripActive) {
+            this.markers.destination.dragging.disable();
+          } else {
+            this.markers.destination.dragging.enable();
+          }
+        }
+        if (this.markers.destination.options) {
+          this.markers.destination.options.draggable = !this.isTripActive;
+        }
+      }
     }
 
     /**
@@ -1192,18 +1235,21 @@
 
       // Update metadata
       if (metadata) {
-        const prevVType = marker._renderedVehicleType || this._resolveVehicleType(marker._driverData);
-        const prevIsActive = marker._renderedIsActive !== undefined ? marker._renderedIsActive : !!(marker._driverData && marker._driverData.isActive);
         marker._driverData = Object.assign(marker._driverData || {}, metadata);
-        const newVType = this._resolveVehicleType(marker._driverData);
-        const newIsActive = !!(marker._driverData.isActive || driverKey === 'active_driver');
-        // If active state changed or vehicle type changed, re-render icon
-        if ((prevVType !== newVType) || (prevIsActive !== newIsActive)) {
-          marker._renderedVehicleType = newVType;
-          marker._renderedIsActive = newIsActive;
-          marker.setIcon(this._createDriverIcon(marker._continuousHeading || heading, marker._driverData));
-        }
+      }
+      const prevVType = marker._renderedVehicleType;
+      const prevIsActive = marker._renderedIsActive;
+      const newVType = this._resolveVehicleType(marker._driverData);
+      const newIsActive = !!(marker._driverData && (marker._driverData.isActive || driverKey === 'active_driver'));
 
+      // If active state changed or vehicle type changed, re-render icon
+      if ((prevVType !== newVType) || (prevIsActive !== newIsActive)) {
+        marker._renderedVehicleType = newVType;
+        marker._renderedIsActive = newIsActive;
+        marker.setIcon(this._createDriverIcon(marker._continuousHeading || heading, marker._driverData));
+      }
+
+      if (metadata) {
         // Dynamically update popup content with refreshed vehicle info
         if (metadata.name || metadata.vehicle || metadata.vehicleType || metadata.status) {
           const vDetails = (newVType === 'motorbike' ? 'Xe máy điện (Navigo Bike)' : (newVType === 'car7' ? 'Ô tô 7 chỗ (Navigo Taxi 7 chỗ)' : (newVType === 'premium' ? 'Xe sang (Navigo Luxury)' : (newVType === 'delivery' ? 'Giao hàng (Navigo Delivery)' : 'Ô tô điện (Navigo Car)'))));
@@ -1243,16 +1289,22 @@
         marker._continuousHeading += diff;
       }
 
-      // Re-create icon or rotate element
+      // Re-create icon or rotate element (strictly verifying correct vehicle SVG class)
       const iconElement = marker.getElement();
+      const expectedBodyClass = (newVType === 'motorbike' ? 'rtree-bike-body' : (newVType === 'delivery' ? 'rtree-delivery-body' : (newVType === 'premium' ? 'rtree-premium-body' : (newVType === 'car7' ? 'rtree-car7-body' : 'rtree-car-body'))));
       if (iconElement) {
         const carMarker = iconElement.querySelector('.rtree-driver-marker');
-        if (carMarker) {
+        const currentBody = iconElement.querySelector('.rtree-bike-body, .rtree-car-body, .rtree-delivery-body, .rtree-car7-body, .rtree-premium-body');
+        if (carMarker && currentBody && currentBody.classList.contains(expectedBodyClass)) {
           carMarker.style.transform = `rotate(${marker._continuousHeading}deg)`;
         } else {
+          marker._renderedVehicleType = newVType;
+          marker._renderedIsActive = newIsActive;
           marker.setIcon(this._createDriverIcon(marker._continuousHeading, marker._driverData));
         }
       } else {
+        marker._renderedVehicleType = newVType;
+        marker._renderedIsActive = newIsActive;
         marker.setIcon(this._createDriverIcon(marker._continuousHeading, marker._driverData));
       }
 

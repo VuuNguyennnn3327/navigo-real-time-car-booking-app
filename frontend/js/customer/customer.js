@@ -219,10 +219,11 @@ class CustomerAppController {
     normalizeVehicleType(type) {
         if (!type) return 'car4';
         const s = String(type).toLowerCase().trim();
-        if (s === 'delivery' || s.includes('giao hàng') || s.includes('giao hang') || s.includes('delivery') || s.includes('package') || s.includes('box')) return 'delivery';
-        if (s === 'bike' || s === 'motorbike' || s.includes('bike') || s.includes('moto') || s.includes('xe máy') || s.includes('xe may') || s.includes('scooter') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
-        if (s === 'car7' || s === 'xl' || s.includes('7 chỗ') || s.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
-        if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || s.includes('sang') || s.includes('luxury') || s.includes('vip')) return 'premium';
+        const unacc = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (s === 'delivery' || unacc.includes('giao hang') || s.includes('delivery') || s.includes('package') || s.includes('box')) return 'delivery';
+        if (s === 'bike' || s === 'motorbike' || s.includes('bike') || s.includes('moto') || unacc.includes('xe may') || s.includes('scooter') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
+        if (s === 'car7' || s === 'xl' || unacc.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
+        if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || unacc.includes('xe sang') || s.includes('luxury') || s.includes('vip')) return 'premium';
         return 'car4';
     }
 
@@ -239,36 +240,24 @@ class CustomerAppController {
         // 2. Infer from vehicleModel string (e.g. 'Navigo Bike E-Scooter', 'Navigo Taxi 7 chỗ')
         if (trip.vehicleModel) {
             const s = String(trip.vehicleModel).toLowerCase();
-            if (s.includes('bike') || s.includes('scooter') || s.includes('xe máy') || s.includes('xe may') || s.includes('moto') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
-            if (s.includes('7 chỗ') || s.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
-            if (s.includes('luxury') || s.includes('sang') || s.includes('plus') || s.includes('vip')) return 'premium';
-            if (s.includes('delivery') || s.includes('giao hàng') || s.includes('giao hang') || s.includes('box')) return 'delivery';
+            const unacc = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            if (s.includes('bike') || s.includes('scooter') || unacc.includes('xe may') || s.includes('moto') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
+            if (unacc.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
+            if (s.includes('luxury') || unacc.includes('sang') || s.includes('plus') || s.includes('vip')) return 'premium';
+            if (s.includes('delivery') || unacc.includes('giao hang') || s.includes('box')) return 'delivery';
         }
 
         // 3. Infer from vehicle label string
         if (trip.vehicle && typeof trip.vehicle === 'string') {
             const s = trip.vehicle.toLowerCase();
-            if (s.includes('bike') || s.includes('scooter') || s.includes('xe máy') || s.includes('xe may') || s.includes('moto')) return 'motorbike';
-            if (s.includes('7 chỗ') || s.includes('7 cho') || s.includes('xl')) return 'car7';
-            if (s.includes('luxury') || s.includes('sang') || s.includes('plus')) return 'premium';
-            if (s.includes('delivery') || s.includes('giao hàng')) return 'delivery';
+            const unacc = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            if (s.includes('bike') || s.includes('scooter') || unacc.includes('xe may') || s.includes('moto')) return 'motorbike';
+            if (unacc.includes('7 cho') || s.includes('xl')) return 'car7';
+            if (s.includes('luxury') || unacc.includes('sang') || s.includes('plus')) return 'premium';
+            if (s.includes('delivery') || unacc.includes('giao hang')) return 'delivery';
         }
 
-        // 4. Match with online driver profile in goride_online_drivers
-        try {
-            const onlineDrivers = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
-            const dEntry = Object.values(onlineDrivers).find(d => 
-                d && (
-                    (trip.driverName && d.name === trip.driverName) || 
-                    (trip.licensePlate && (d.plate === trip.licensePlate || d.licensePlate === trip.licensePlate))
-                )
-            );
-            if (dEntry && (dEntry.vehicleType || dEntry.type || dEntry.model || (dEntry.vehicle && dEntry.vehicle.type))) {
-                return this.normalizeVehicleType(dEntry.vehicleType || dEntry.type || dEntry.model || (dEntry.vehicle && dEntry.vehicle.type));
-            }
-        } catch (e) {}
-
-        // 5. Match with active trip in localStorage
+        // 4. Match with active trip in localStorage
         try {
             const act = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
             if (act && (act.id === trip.id || !trip.id)) {
@@ -280,7 +269,27 @@ class CustomerAppController {
             }
         } catch (e) {}
 
-        // 6. Match with admin trips in localStorage
+        // 5. Customer selected service
+        if (this.selectedService && this.selectedService !== 'car4') {
+            return this.normalizeVehicleType(this.selectedService);
+        }
+
+        // 6. Match with online driver profile in goride_online_drivers (only if non-car4)
+        try {
+            const onlineDrivers = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
+            const dEntry = Object.values(onlineDrivers).find(d => 
+                d && (
+                    (trip.driverName && d.name === trip.driverName) || 
+                    (trip.licensePlate && (d.plate === trip.licensePlate || d.licensePlate === trip.licensePlate))
+                )
+            );
+            if (dEntry && (dEntry.vehicleType || dEntry.type || dEntry.model || (dEntry.vehicle && dEntry.vehicle.type))) {
+                const normD = this.normalizeVehicleType(dEntry.vehicleType || dEntry.type || dEntry.model || (dEntry.vehicle && dEntry.vehicle.type));
+                if (normD && normD !== 'car4') return normD;
+            }
+        } catch (e) {}
+
+        // 7. Match with admin trips in localStorage
         try {
             const adm = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
             const found = adm.find(t => t && (t.id === trip.id));
@@ -362,8 +371,6 @@ class CustomerAppController {
         this.renderVehicleOptions();
         this.handleUrlParameters();
         this.checkBackendStatus();
-        this.setupCustomerPresence();
-        this.setupAccountLockGuards();
 
         // 100% Real Data Enforcement: Thorough purge of all legacy & default mock trips across all storage
         if (typeof purgeAllMockTrips === 'function') {
@@ -518,166 +525,6 @@ class CustomerAppController {
     }
 
     /**
-     * Customer presence & heartbeat management (Real-time online status)
-     */
-    setupCustomerPresence() {
-        const getCurUser = () => {
-            let u = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-            if (!u) {
-                try { u = JSON.parse(localStorage.getItem('goride_user') || 'null'); } catch(e) {}
-            }
-            return u;
-        };
-
-        const user = getCurUser();
-        if (!user || !user.id || user.role === 'admin' || user.role === 'driver') return;
-
-        const pingPresence = () => {
-            const u = getCurUser();
-            if (!u || !u.id) return;
-            if (typeof realtimeSync !== 'undefined' && typeof realtimeSync.setCustomerOnline === 'function') {
-                realtimeSync.setCustomerOnline(u.id, true, {
-                    name: u.name || 'Khách hàng',
-                    phone: u.phone || '',
-                    email: u.email || '',
-                    updatedAt: Date.now()
-                });
-            }
-        };
-
-        // Immediate ping
-        pingPresence();
-
-        // 30s heartbeat
-        if (this._presenceHeartbeat) clearInterval(this._presenceHeartbeat);
-        this._presenceHeartbeat = setInterval(pingPresence, 30000);
-
-        // Disconnect hook
-        window.addEventListener('beforeunload', () => {
-            const u = getCurUser();
-            if (u && u.id && typeof realtimeSync !== 'undefined' && typeof realtimeSync.setCustomerOnline === 'function') {
-                realtimeSync.setCustomerOnline(u.id, false);
-            }
-        });
-    }
-
-    /**
-     * Checks if current account is locked by Administrator
-     */
-    isAccountLocked(user) {
-        if (!user) {
-            user = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-            if (!user) {
-                try { user = JSON.parse(localStorage.getItem('goride_user') || 'null'); } catch(e) {}
-            }
-        }
-        if (!user) return false;
-        if (user.status === 'locked') return true;
-        try {
-            const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
-            const matched = offlineUsers.find(u => u.id === user.id || (user.email && u.email === user.email) || (user.phone && u.phone === user.phone));
-            if (matched && matched.status === 'locked') return true;
-        } catch (e) {}
-        return false;
-    }
-
-    /**
-     * Show locked account notification and lock booking actions
-     */
-    showCustomerLockedNotice() {
-        const btnConfirmPickup = document.getElementById('btn-confirm-pickup-cta');
-        if (btnConfirmPickup) {
-            btnConfirmPickup.disabled = true;
-            btnConfirmPickup.style.opacity = '0.5';
-            btnConfirmPickup.style.cursor = 'not-allowed';
-            btnConfirmPickup.title = 'Tài khoản của bạn đã bị khóa';
-        }
-
-        const btnSolicitar = document.getElementById('btn-solicitar-ride');
-        if (btnSolicitar) {
-            btnSolicitar.disabled = true;
-            btnSolicitar.style.opacity = '0.5';
-            btnSolicitar.style.cursor = 'not-allowed';
-            btnSolicitar.title = 'Tài khoản của bạn đã bị khóa';
-        }
-
-        let banner = document.getElementById('customer-locked-banner');
-        if (!banner) {
-            banner = document.createElement('div');
-            banner.id = 'customer-locked-banner';
-            banner.style.cssText = 'position:fixed; top:16px; left:16px; right:16px; z-index:9999999; background:#fef2f2; border:1.5px solid #ef4444; color:#991b1b; padding:14px 20px; border-radius:14px; box-shadow:0 10px 30px rgba(239,68,68,0.3); display:flex; align-items:center; gap:14px; font-family:system-ui,-apple-system,sans-serif;';
-            banner.innerHTML = `
-                <span style="font-size:26px; line-height:1;">🚨</span>
-                <div style="flex:1;">
-                    <div style="color:#b91c1c; font-size:14px; font-weight:800; letter-spacing:-0.2px;">TÀI KHOẢN ĐÃ BỊ TẠM KHÓA BỞI QUẢN TRỊ VIÊN</div>
-                    <div style="font-size:12px; font-weight:500; color:#7f1d1d; margin-top:3px; line-height:1.4;">Tài khoản của bạn đã bị khóa. Bạn không thể thực hiện đặt chuyến mới. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.</div>
-                </div>
-            `;
-            document.body.appendChild(banner);
-        }
-
-        if (typeof window.showNavigoModal === 'function') {
-            window.showNavigoModal({
-                title: '🚨 Tài khoản bị tạm khóa',
-                message: 'Tài khoản của bạn đã bị Quản trị viên tạm khóa. Bạn tạm thời không thể đặt chuyến xe mới. Vui lòng liên hệ tổng đài hỗ trợ Navigo: 1900 8888 để biết thêm chi tiết.',
-                icon: '🚨',
-                confirmText: 'Đã hiểu',
-                showCancel: false,
-                danger: true
-            });
-        }
-    }
-
-    removeCustomerLockedNotice() {
-        const banner = document.getElementById('customer-locked-banner');
-        if (banner) banner.remove();
-        const btnConfirmPickup = document.getElementById('btn-confirm-pickup-cta');
-        if (btnConfirmPickup) {
-            btnConfirmPickup.disabled = false;
-            btnConfirmPickup.style.opacity = '1';
-            btnConfirmPickup.style.cursor = 'pointer';
-            btnConfirmPickup.removeAttribute('title');
-        }
-        const btnSolicitar = document.getElementById('btn-solicitar-ride');
-        if (btnSolicitar) {
-            btnSolicitar.disabled = false;
-            btnSolicitar.style.opacity = '1';
-            btnSolicitar.style.cursor = 'pointer';
-            btnSolicitar.removeAttribute('title');
-        }
-    }
-
-    setupAccountLockGuards() {
-        const user = (typeof sessionManager !== 'undefined') ? sessionManager.getUser?.() : null;
-        if (this.isAccountLocked(user)) {
-            this.showCustomerLockedNotice();
-        }
-
-        window.addEventListener('storage', (e) => {
-            if (e.key === 'goride_user_lock_event') {
-                try {
-                    const lockData = JSON.parse(e.newValue || '{}');
-                    const curUser = (typeof sessionManager !== 'undefined') ? sessionManager.getUser?.() : null;
-                    if (curUser && (lockData.userId === curUser.id || (curUser.email && lockData.email === curUser.email) || (curUser.phone && lockData.phone === curUser.phone))) {
-                        if (lockData.status === 'locked') {
-                            if (typeof sessionManager !== 'undefined') {
-                                sessionManager.updateUser({ status: 'locked' });
-                            }
-                            this.showCustomerLockedNotice();
-                        } else if (lockData.status === 'active') {
-                            if (typeof sessionManager !== 'undefined') {
-                                sessionManager.updateUser({ status: 'active' });
-                            }
-                            this.removeCustomerLockedNotice();
-                            this.showToast('Tài khoản của bạn đã được mở khóa! Bạn có thể tiếp tục đặt xe.', 'success', 5000);
-                        }
-                    }
-                } catch (err) {}
-            }
-        });
-    }
-
-    /**
      * Check real C++ backend status honestly
      */
     async checkBackendStatus() {
@@ -751,6 +598,10 @@ class CustomerAppController {
 
             // Map click event: Allows seamless tapping on map across views
             this.mapController.map.on('click', async (e) => {
+                if (this.activeTrip || this.currentView === 'tracking') {
+                    // Cố định vị trí: Không cho phép đổi điểm đón hoặc điểm đến khi đang trong cuốc xe
+                    return;
+                }
                 const { lat, lng } = e.latlng;
 
                 // Pickup confirm mode: pan map to clicked spot & update address
@@ -960,6 +811,11 @@ class CustomerAppController {
      */
     switchView(viewName) {
         this.currentView = viewName;
+
+        if (this.mapController && typeof this.mapController.setTripActive === 'function') {
+            const isTracking = (viewName === 'tracking') || !!this.activeTrip;
+            this.mapController.setTripActive(isTracking);
+        }
 
         const views = {
             'search': document.getElementById('view-search'),
@@ -1373,6 +1229,10 @@ class CustomerAppController {
         const btnPinPickup = document.getElementById('btn-pin-pickup-on-map');
         if (btnPinPickup) {
             btnPinPickup.addEventListener('click', () => {
+                if (this.activeTrip || this.currentView === 'tracking') {
+                    this.showToast('Điểm đón đã được cố định trong suốt chuyến xe.', 'info', 3000);
+                    return;
+                }
                 if (!this.mapController || !this.mapController.map) return;
                 if (window.innerWidth <= 1024) {
                     this.switchView('pickup-confirm');
@@ -1392,6 +1252,10 @@ class CustomerAppController {
         const btnPinDest = document.getElementById('btn-pin-dest-on-map');
         if (btnPinDest) {
             btnPinDest.addEventListener('click', () => {
+                if (this.activeTrip || this.currentView === 'tracking') {
+                    this.showToast('Điểm đến đã được cố định trong suốt chuyến xe.', 'info', 3000);
+                    return;
+                }
                 if (!this.mapController || !this.mapController.map) return;
                 if (window.innerWidth <= 1024) {
                     if (this.pickup && this.destination) {
@@ -1431,6 +1295,17 @@ class CustomerAppController {
 
         // Listen for map pin dragend events
         window.addEventListener('navigo:pickup_dragend', async (e) => {
+            if (this.activeTrip || this.currentView === 'tracking') {
+                if (this.mapController && this.mapController.markers && this.mapController.markers.pickup && this.activeTrip) {
+                    const pLat = Number(this.activeTrip.pickupLat || (this.activeTrip.pickup && this.activeTrip.pickup.lat) || (this.pickup && this.pickup.lat));
+                    const pLon = Number(this.activeTrip.pickupLon || (this.activeTrip.pickup && this.activeTrip.pickup.lng) || (this.pickup && this.pickup.lng));
+                    if (!isNaN(pLat) && !isNaN(pLon)) {
+                        this.mapController.markers.pickup.setLatLng([pLat, pLon]);
+                    }
+                }
+                this.showToast('Vị trí điểm đón được cố định trong suốt chuyến đi.', 'info', 3000);
+                return;
+            }
             const { lat, lng } = e.detail || {};
             if (!lat || !lng) return;
             let pName = `Tọa độ (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
@@ -1462,6 +1337,17 @@ class CustomerAppController {
         });
 
         window.addEventListener('navigo:destination_dragend', async (e) => {
+            if (this.activeTrip || this.currentView === 'tracking') {
+                if (this.mapController && this.mapController.markers && this.mapController.markers.destination && this.activeTrip) {
+                    const dLat = Number(this.activeTrip.dropoffLat || (this.activeTrip.destination && this.activeTrip.destination.lat) || (this.destination && this.destination.lat));
+                    const dLon = Number(this.activeTrip.dropoffLon || (this.activeTrip.destination && this.activeTrip.destination.lng) || (this.destination && this.destination.lng));
+                    if (!isNaN(dLat) && !isNaN(dLon)) {
+                        this.mapController.markers.destination.setLatLng([dLat, dLon]);
+                    }
+                }
+                this.showToast('Vị trí điểm đến được cố định trong suốt chuyến đi.', 'info', 3000);
+                return;
+            }
             const { lat, lng } = e.detail || {};
             if (!lat || !lng) return;
             let dName = `Tọa độ (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
@@ -1490,6 +1376,28 @@ class CustomerAppController {
             if (this.pickup) {
                 this.switchView('vehicle-select');
                 this.renderRouteOnMap();
+            }
+        });
+
+        // Live stream driver GPS location updates
+        window.addEventListener('goride:driver_location_changed', (e) => {
+            if (this.activeTrip && e.detail && e.detail.lat && e.detail.lng) {
+                const dLat = Number(e.detail.lat);
+                const dLng = Number(e.detail.lng);
+                if (!isNaN(dLat) && !isNaN(dLng) && dLat !== 0 && dLng !== 0) {
+                    this._latestDriverPosition = {
+                        lat: dLat,
+                        lng: dLng,
+                        heading: Number(e.detail.heading || 0),
+                        timestamp: Date.now()
+                    };
+                    this.activeTrip.driverLat = dLat;
+                    this.activeTrip.driverLon = dLng;
+                    this.activeTrip.driverHeading = Number(e.detail.heading || 0);
+                    if (typeof this.updateTrackingUI === 'function') {
+                        this.updateTrackingUI(this.activeTrip);
+                    }
+                }
             }
         });
 
@@ -1658,10 +1566,6 @@ class CustomerAppController {
                     } else {
                         window.location.href = 'login.html?redirect=customer.html';
                     }
-                    return;
-                }
-                if (this.isAccountLocked(curUser)) {
-                    this.showCustomerLockedNotice();
                     return;
                 }
                 // If destination already chosen, proceed to vehicle selection; else go back to search
@@ -3236,15 +3140,6 @@ class CustomerAppController {
             { id: 'pvd_ql13', lat: 10.82400, lng: 106.71200 },    // Phạm Văn Đồng x Quốc Lộ 13
             { id: 'ql13_hiepbinh', lat: 10.83500, lng: 106.71500 }, // QL13 x Hiệp Bình
             { id: 'ql13_binhphuoc', lat: 10.85000, lng: 106.72000 }, // Ngã Tư Bình Phước (QL13 x QL1A)
-            // District 9 & Tang Nhon Phu & Thu Duc
-            { id: 'tnp_duong_a', lat: 10.84380, lng: 106.78250 },     // 43/8 Đường A, Tăng Nhơn Phú
-            { id: 'tnp_vietinbank', lat: 10.84650, lng: 106.77900 },  // VietinBank Tăng Nhơn Phú (Lê Văn Việt)
-            { id: 'tnp_levanviet', lat: 10.84600, lng: 106.77850 },   // Lê Văn Việt x Man Thiện
-            { id: 'tnp_laxuanoai', lat: 10.84100, lng: 106.79000 },   // Hẻm 32 Lã Xuân Oai, Tăng Nhơn Phú
-            { id: 'tnp_hocvien', lat: 10.84450, lng: 106.78600 },     // Học viện Chính trị
-            { id: 'tnp_manthien', lat: 10.85050, lng: 106.78500 },    // Man Thiện
-            { id: 'thuduc_ufm', lat: 10.84900, lng: 106.78150 },      // ĐH Tài chính - Marketing (UFM)
-            { id: 'thuduc_ute', lat: 10.85080, lng: 106.77190 },      // ĐH Sư phạm Kỹ thuật (UTE)
             // District 12 & An Phu Dong
             { id: 'truong_chinh_an_suong', lat: 10.84500, lng: 106.61800 }, // Ngã Tư An Sương
             { id: 'ql1a_tth', lat: 10.85500, lng: 106.64500 },    // QL1A x Tân Thới Hiệp
@@ -3285,15 +3180,7 @@ class CustomerAppController {
             cau_binh_trieu: ['pvd_ql13', 'tdt_nhc'],
             ql13_hiepbinh: ['pvd_ql13', 'ql13_binhphuoc'],
             ql13_binhphuoc: ['ql13_hiepbinh', 'an_phu_dong_d3', 'xlhn_thuduc'],
-            xlhn_thuduc: ['ql13_binhphuoc', 'cau_sg', 'thuduc_ute', 'thuduc_ufm'],
-            thuduc_ute: ['xlhn_thuduc', 'tnp_levanviet'],
-            thuduc_ufm: ['xlhn_thuduc', 'tnp_manthien', 'tnp_vietinbank'],
-            tnp_levanviet: ['thuduc_ute', 'tnp_vietinbank', 'tnp_manthien'],
-            tnp_vietinbank: ['tnp_levanviet', 'thuduc_ufm', 'tnp_duong_a'],
-            tnp_duong_a: ['tnp_vietinbank', 'tnp_hocvien'],
-            tnp_hocvien: ['tnp_duong_a', 'tnp_laxuanoai'],
-            tnp_laxuanoai: ['tnp_hocvien', 'tnp_manthien'],
-            tnp_manthien: ['tnp_levanviet', 'thuduc_ufm', 'tnp_laxuanoai'],
+            xlhn_thuduc: ['ql13_binhphuoc', 'cau_sg'],
             cau_sg: ['xlhn_thuduc', 'lm81'],
             nd_pas: ['nd_dk', 'nd_nkk'],
             nd_dk: ['ly_dk', 'ly_hbt', 'nd_pas'],
@@ -3331,20 +3218,6 @@ class CustomerAppController {
 
         const startRes = findNearestNode(pLat, pLng);
         const endRes = findNearestNode(dLat, dLng);
-        const directDist = this.calculateHaversineDistance(pLat, pLng, dLat, dLng);
-
-        // Sanity Check: For short direct trips (< 1.2km) or if snapping to nodes creates an unnatural detour (> directDist)
-        // generate a clean direct street corridor directly between pickup and destination
-        if (directDist < 1200 || (startRes.dist > directDist * 0.7 && endRes.dist > directDist * 0.7)) {
-            const dLat_diff = dLat - pLat;
-            const dLng_diff = dLng - pLng;
-            return [
-                [pLat, pLng],
-                [Number((pLat + dLat_diff * 0.33 + dLat_diff * 0.03).toFixed(6)), Number((pLng + dLng_diff * 0.33 - dLng_diff * 0.02).toFixed(6))],
-                [Number((pLat + dLat_diff * 0.67 - dLat_diff * 0.02).toFixed(6)), Number((pLng + dLng_diff * 0.67 + dLng_diff * 0.03).toFixed(6))],
-                [dLat, dLng]
-            ];
-        }
 
         // BFS traversal on the real road network
         if (startRes.node.id !== endRes.node.id) {
@@ -3772,11 +3645,6 @@ class CustomerAppController {
                     window.location.href = 'login.html?redirect=customer.html';
                 }, 1200);
             }
-            return;
-        }
-
-        if (this.isAccountLocked(curUser)) {
-            this.showCustomerLockedNotice();
             return;
         }
 
@@ -4595,6 +4463,9 @@ class CustomerAppController {
         // 3. Clear active state & intervals
         this.activeTrip = null;
         this.activeTripId = null;
+        if (this.mapController && typeof this.mapController.setTripActive === 'function') {
+            this.mapController.setTripActive(false);
+        }
         this._latestDriverPosition = null;
         this._lastApproachDriverPos = null;
         this._hasDrawnApproachLine = false;
@@ -4646,6 +4517,10 @@ class CustomerAppController {
      * Start live polling of active trip from C++ backend or shared storage dispatch
      */
     startActiveTripPolling(tripId) {
+        if (this.mapController && typeof this.mapController.setTripActive === 'function') {
+            this.mapController.setTripActive(true);
+        }
+
         if (this.trackingInterval) {
             clearInterval(this.trackingInterval);
             this.trackingInterval = null;
@@ -5132,11 +5007,22 @@ class CustomerAppController {
             const btnChatDriver = document.getElementById('btn-chat-driver');
             if (btnChatDriver) {
                 btnChatDriver.onclick = () => {
-                    const msg = prompt('Gửi tin nhắn nhanh tới tài xế (VD: Tôi đang đứng ở sảnh / Tôi mặc áo xanh):', 'Tôi đang chờ ở điểm đón.');
-                    if (msg && msg.trim()) {
-                        this.showToast('💬 Đã gửi tin nhắn tới tài xế: "' + msg.trim() + '"', 'success', 4000);
-                    }
+                    this.showChatDialog();
                 };
+            }
+
+            // Real-time trip chat listener for background message notification
+            const curTripId = trip.id || trip.tripCode;
+            if (curTripId && typeof realtimeSync !== 'undefined' && realtimeSync.listenTripChat) {
+                realtimeSync.listenTripChat(curTripId, (msg) => {
+                    if (msg && msg.senderRole === 'driver') {
+                        if (!this.isChatOpen) {
+                            this.unreadChatCount = (this.unreadChatCount || 0) + 1;
+                            this.updateChatBadge();
+                            this.showToast(`💬 Tài xế ${msg.senderName || ''}: ${msg.text}`, 'info', 4500);
+                        }
+                    }
+                });
             }
 
             if (status === 'ACCEPTED') {
@@ -5244,18 +5130,22 @@ class CustomerAppController {
                     this._latestDriverPosition = { lat: dLat, lng: dLon, heading: dHeading, timestamp: Date.now() };
 
                     let vType = tripVType || this.resolveTripVehicleType(trip);
-                    try {
-                        const onlineDrivers = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
-                        const dEntry = Object.values(onlineDrivers).find(d => 
-                            d && (
-                                (trip.driverName && d.name === trip.driverName) || 
-                                (trip.licensePlate && (d.plate === trip.licensePlate || d.licensePlate === trip.licensePlate))
-                            )
-                        );
-                        if (dEntry && (dEntry.vehicleType || dEntry.type)) {
-                            vType = this.normalizeVehicleType(dEntry.vehicleType || dEntry.type);
-                        }
-                    } catch (e) {}
+                    // Do not allow stale or default onlineDrivers entry to overwrite an explicit non-car4 trip
+                    if (!vType || vType === 'car4') {
+                        try {
+                            const onlineDrivers = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
+                            const dEntry = Object.values(onlineDrivers).find(d => 
+                                d && (
+                                    (trip.driverName && d.name === trip.driverName) || 
+                                    (trip.licensePlate && (d.plate === trip.licensePlate || d.licensePlate === trip.licensePlate))
+                                )
+                            );
+                            if (dEntry && (dEntry.vehicleType || dEntry.type)) {
+                                const normD = this.normalizeVehicleType(dEntry.vehicleType || dEntry.type);
+                                if (normD && normD !== 'car4') vType = normD;
+                            }
+                        } catch (e) {}
+                    }
 
                     const tripGeometry = (Array.isArray(trip.routeGeometry) && trip.routeGeometry.length > 1)
                         ? trip.routeGeometry
@@ -5266,6 +5156,7 @@ class CustomerAppController {
                         vehicle: `${vDetails.label}${trip.licensePlate ? ' - ' + trip.licensePlate : ''}`,
                         vehicleType: vType,
                         iconType: vType,
+                        vehicleModel: trip.vehicleModel || vDetails.name,
                         status: status,
                         routeGeometry: tripGeometry,
                         isActive: true
@@ -5655,6 +5546,7 @@ class CustomerAppController {
                             <span data-star="5" style="color:#f59e0b;">⭐</span>
                         </div>
                         <div style="text-align:center; font-size:0.8rem; color:#64748b; margin-top:4px;" id="rating-label">Tuyệt vời (5 sao)</div>
+                        <textarea id="customer-rating-comment" rows="2" placeholder="Góp ý thêm về tài xế hoặc chuyến đi (tùy chọn)..." style="width:100%; border:1px solid #cbd5e1; border-radius:12px; padding:8px 12px; font-size:0.85rem; font-family:inherit; resize:none; box-sizing:border-box; outline:none; margin-top:10px;"></textarea>
                     </div>
 
                     <div style="display:flex; gap:10px; margin-top:16px;">
@@ -5723,18 +5615,22 @@ class CustomerAppController {
             const btnFinish = document.getElementById('btn-finish-trip-dialog');
             if (btnFinish) {
                 btnFinish.addEventListener('click', () => {
+                    const comment = (document.getElementById('customer-rating-comment')?.value || '').trim();
                     // Update rating in saved user trip history
                     if (tripData) {
-                        this.saveUserTrip({ ...tripData, status: 'completed', rating: selectedRating });
+                        this.saveUserTrip({ ...tripData, status: 'completed', rating: selectedRating, feedback: comment });
                     }
                     if (typeof realtimeSync !== 'undefined' && tripCode) {
                         const curCust = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
                         realtimeSync.saveTripRating(tripCode, {
                             rating: selectedRating,
+                            feedback: comment,
                             driverId: tripData?.driverId || tripData?.driver?.id,
                             driverName: tripData?.driverName || driverTitle || 'Tài xế',
+                            driverPhone: tripData?.driverPhone || tripData?.driver?.phone || tripData?.phone || '',
                             customerName: curCust?.name || tripData?.customerName || 'Khách hàng',
                             customerId: curCust?.id || tripData?.customerId || '',
+                            customerPhone: curCust?.phone || tripData?.customerPhone || '',
                             userKey: this.getCurrentUserKey()
                         });
                     }
@@ -5779,6 +5675,9 @@ class CustomerAppController {
         this._hasFittedArrivedBounds = false;
         if (this.mapController && typeof this.mapController.clearDriverRoute === 'function') {
             this.mapController.clearDriverRoute();
+        }
+        if (this.mapController && typeof this.mapController.setTripActive === 'function') {
+            this.mapController.setTripActive(false);
         }
         if (this.trackingInterval) {
             clearInterval(this.trackingInterval);
@@ -5827,44 +5726,205 @@ class CustomerAppController {
     }
 
     /**
-     * Show In-App Chat Simulated Dialog
+     * Show Real-Time Interactive In-App Chat Modal with Driver
      */
     showChatDialog() {
-        const dName = (this.activeTrip && this.activeTrip.driverName) ? this.activeTrip.driverName : 'Tài xế đối tác';
+        const trip = this.activeTrip;
+        const tripId = trip ? (trip.id || trip.tripCode) : (this.activeTripId || 'trip_active');
+        const dName = (trip && trip.driverName) ? trip.driverName : 'Tài xế đối tác';
+        const dPlate = (trip && (trip.licensePlate || trip.driverPlate || trip.plate)) ? (trip.licensePlate || trip.driverPlate || trip.plate) : '';
+        const dVehicle = (trip && (trip.vehicleModel || trip.vehicleTypeName)) ? (trip.vehicleModel || trip.vehicleTypeName) : '';
+        const driverInfoStr = [dPlate, dVehicle].filter(Boolean).join(' • ');
+
+        this.isChatOpen = true;
+        this.unreadChatCount = 0;
+        this.updateChatBadge();
+
+        const messages = (typeof realtimeSync !== 'undefined' && realtimeSync.getTripChatMessages)
+            ? realtimeSync.getTripChatMessages(tripId)
+            : [];
+
+        const renderMessagesHtml = (msgs) => {
+            if (!msgs || msgs.length === 0) {
+                return `
+                    <div id="customer-chat-empty" style="text-align:center; padding:32px 12px; color:#94a3b8; font-size:0.85rem;">
+                        <div style="font-size:2rem; margin-bottom:6px;">💬</div>
+                        <div style="font-weight:700; color:#64748b;">Chưa có tin nhắn nào.</div>
+                        <div style="font-size:0.75rem; margin-top:2px;">Hãy gửi tin nhắn để trao đổi vị trí hoặc điểm hẹn với tài xế!</div>
+                    </div>
+                `;
+            }
+            return msgs.map(m => {
+                const isMe = (m.senderRole === 'customer');
+                const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+                return `
+                    <div style="display:flex; flex-direction:column; align-items:${isMe ? 'flex-end' : 'flex-start'}; margin-bottom:8px;">
+                        <div style="font-size:0.68rem; color:#94a3b8; margin-bottom:2px; padding:0 4px;">
+                            ${isMe ? 'Bạn' : this.escapeHtml(m.senderName || dName)} • ${timeStr}
+                        </div>
+                        <div style="${isMe 
+                            ? 'background:linear-gradient(135deg, #00b1a9, #059669); color:#fff; border-radius:14px 14px 2px 14px;' 
+                            : 'background:#ffffff; color:#0f172a; border:1px solid #e2e8f0; border-radius:14px 14px 14px 2px; box-shadow:0 1px 3px rgba(0,0,0,0.05);'} 
+                            padding:9px 13px; max-width:82%; font-size:0.88rem; line-height:1.4; word-break:break-word;">
+                            ${this.escapeHtml(m.text)}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        };
+
         this.showDialog(`
-            <div>
-                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e2e8f0; padding-bottom:8px; margin-bottom:12px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:1.2rem;">💬</span>
-                        <strong>${this.escapeHtml(dName)}</strong>
-                        <span class="badge badge-warning" style="font-size:0.65rem;">BẢN XEM TRƯỚC</span>
+            <div style="position:relative; display:flex; flex-direction:column; max-height:85vh;">
+                <!-- Chat Header -->
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e2e8f0; padding-bottom:10px; margin-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <div style="width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg, #00b1a9, #0f2d3c); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:1.1rem;">
+                            🛵
+                        </div>
+                        <div>
+                            <div style="font-weight:800; color:#0f172a; font-size:1rem; display:flex; align-items:center; gap:6px;">
+                                ${this.escapeHtml(dName)}
+                                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981;" title="Trực tuyến"></span>
+                            </div>
+                            <div style="font-size:0.75rem; color:#64748b;">${this.escapeHtml(driverInfoStr || 'Tài xế đang phục vụ')}</div>
+                        </div>
                     </div>
-                    <button type="button" id="btn-close-chat" style="background:none; border:none; font-size:1.2rem; cursor:pointer;">&times;</button>
+                    <button type="button" id="btn-close-chat" style="background:#f1f5f9; border:none; width:30px; height:30px; border-radius:50%; font-size:1.2rem; cursor:pointer; color:#64748b; display:flex; align-items:center; justify-content:center;">&times;</button>
                 </div>
 
-                <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:8px 12px; margin-bottom:12px; font-size:0.78rem; color:#92400e;">
-                    ⚠️ Kênh chat thời gian thực (WebSockets) hiện chưa được kết nối với backend C++. Tin nhắn mẫu bên dưới chỉ nhằm minh họa giao diện.
+                <!-- Chat Messages Feed -->
+                <div id="customer-chat-feed" style="flex:1; max-height:240px; min-height:160px; overflow-y:auto; padding:8px 4px; display:flex; flex-direction:column; margin-bottom:10px; scroll-behavior:smooth;">
+                    ${renderMessagesHtml(messages)}
                 </div>
 
-                <div style="display:flex; flex-direction:column; gap:8px; max-height:140px; overflow-y:auto; margin-bottom:12px; font-size:0.85rem;">
-                    <div style="background:#f1f5f9; padding:8px 12px; border-radius:12px 12px 12px 2px; max-width:80%;">
-                        Dạ em đang đến đón anh/chị ạ! Khoảng 3 phút nữa em tới.
-                    </div>
-                    <div style="background:var(--goride-teal-light); color:var(--goride-teal-dark); padding:8px 12px; border-radius:12px 12px 2px 12px; max-width:80%; margin-left:auto;">
-                        Cảm ơn bạn, mình đang đứng trước sảnh chính nhé.
-                    </div>
+                <!-- Quick Replies Chips -->
+                <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:8px; margin-bottom:8px; -webkit-overflow-scrolling:touch;" id="chat-quick-chips">
+                    <button type="button" class="btn-customer-chat-chip" data-msg="Tôi đang xuống sảnh ngay ạ" style="white-space:nowrap; background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Tôi đang xuống sảnh ngay</button>
+                    <button type="button" class="btn-customer-chat-chip" data-msg="Tôi mặc áo đen, đứng gần cổng" style="white-space:nowrap; background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Tôi đứng gần cổng</button>
+                    <button type="button" class="btn-customer-chat-chip" data-msg="Bác tài đợi tôi khoảng 1-2 phút nhé" style="white-space:nowrap; background:#fef3c7; border:1px solid #fde68a; color:#b45309; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Đợi tôi 1-2 phút nhé</button>
+                    <button type="button" class="btn-customer-chat-chip" data-msg="Vâng, tôi đã thấy xe của bạn rồi!" style="white-space:nowrap; background:#f5f3ff; border:1px solid #ddd6fe; color:#6d28d9; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Đã thấy xe</button>
                 </div>
 
-                <div style="display:flex; gap:6px;">
-                    <input type="text" placeholder="Tính năng chat đang chờ kết nối Backend..." class="form-input" style="font-size:0.85rem; height:40px;" disabled>
-                    <button type="button" class="btn btn-primary" style="height:40px; padding:0 14px;" disabled>Gửi</button>
-                </div>
+                <!-- Chat Input Row -->
+                <form id="customer-chat-form" style="display:flex; gap:8px; margin:0;" onsubmit="return false;">
+                    <input type="text" id="customer-chat-input" placeholder="Nhập tin nhắn tới tài xế..." class="form-input" style="flex:1; height:42px; font-size:0.88rem; border-radius:12px; padding:0 14px;" autocomplete="off" autofocus>
+                    <button type="submit" id="btn-customer-send-chat" style="height:42px; padding:0 18px; border-radius:12px; background:linear-gradient(135deg, #00b1a9, #0f2d3c); color:#fff; border:none; font-weight:700; font-size:0.88rem; cursor:pointer; display:flex; align-items:center; gap:4px; box-shadow:0 3px 10px rgba(0,177,169,0.3);">
+                        <span>Gửi</span> ➤
+                    </button>
+                </form>
             </div>
         `);
 
-        const closeBtn = document.getElementById('btn-close-chat');
-        if (closeBtn) closeBtn.addEventListener('click', () => this.closeDialog());
+        const feed = document.getElementById('customer-chat-feed');
+        if (feed) feed.scrollTop = feed.scrollHeight;
 
+        const closeBtn = document.getElementById('btn-close-chat');
+        if (closeBtn) {
+            closeBtn.onclick = () => {
+                this.isChatOpen = false;
+                this.closeDialog();
+            };
+        }
+
+        const inputEl = document.getElementById('customer-chat-input');
+        const formEl = document.getElementById('customer-chat-form');
+
+        const doSend = async (textToSend) => {
+            const txt = (textToSend || inputEl?.value || '').trim();
+            if (!txt) return;
+            if (inputEl) inputEl.value = '';
+
+            const curCust = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+            const cName = curCust?.name || trip?.customerName || 'Khách hàng';
+            const cId = curCust?.id || trip?.customerId || '';
+
+            if (typeof realtimeSync !== 'undefined' && realtimeSync.sendChatMessage) {
+                await realtimeSync.sendChatMessage(tripId, {
+                    text: txt,
+                    senderRole: 'customer',
+                    senderName: cName,
+                    senderId: cId
+                });
+            }
+
+            if (feed) {
+                const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                const empty = document.getElementById('customer-chat-empty');
+                if (empty) empty.remove();
+
+                const msgDiv = document.createElement('div');
+                msgDiv.style.cssText = 'display:flex; flex-direction:column; align-items:flex-end; margin-bottom:8px;';
+                msgDiv.innerHTML = `
+                    <div style="font-size:0.68rem; color:#94a3b8; margin-bottom:2px; padding:0 4px;">Bạn • ${timeStr}</div>
+                    <div style="background:linear-gradient(135deg, #00b1a9, #059669); color:#fff; border-radius:14px 14px 2px 14px; padding:9px 13px; max-width:82%; font-size:0.88rem; line-height:1.4; word-break:break-word;">
+                        ${this.escapeHtml(txt)}
+                    </div>
+                `;
+                feed.appendChild(msgDiv);
+                feed.scrollTop = feed.scrollHeight;
+            }
+        };
+
+        if (formEl) {
+            formEl.onsubmit = (e) => {
+                e.preventDefault();
+                doSend();
+            };
+        }
+
+        // Wire quick reply chips
+        document.querySelectorAll('.btn-customer-chat-chip').forEach(chip => {
+            chip.onclick = () => {
+                const msg = chip.getAttribute('data-msg');
+                if (msg) doSend(msg);
+            };
+        });
+
+        // Setup real-time listener for this trip
+        if (typeof realtimeSync !== 'undefined' && realtimeSync.listenTripChat) {
+            realtimeSync.listenTripChat(tripId, (msg) => {
+                if (msg && msg.senderRole === 'driver') {
+                    if (this.isChatOpen && feed) {
+                        const empty = document.getElementById('customer-chat-empty');
+                        if (empty) empty.remove();
+                        const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+                        const msgDiv = document.createElement('div');
+                        msgDiv.style.cssText = 'display:flex; flex-direction:column; align-items:flex-start; margin-bottom:8px;';
+                        msgDiv.innerHTML = `
+                            <div style="font-size:0.68rem; color:#94a3b8; margin-bottom:2px; padding:0 4px;">${this.escapeHtml(msg.senderName || dName)} • ${timeStr}</div>
+                            <div style="background:#ffffff; color:#0f172a; border:1px solid #e2e8f0; border-radius:14px 14px 14px 2px; box-shadow:0 1px 3px rgba(0,0,0,0.05); padding:9px 13px; max-width:82%; font-size:0.88rem; line-height:1.4; word-break:break-word;">
+                                ${this.escapeHtml(msg.text)}
+                            </div>
+                        `;
+                        feed.appendChild(msgDiv);
+                        feed.scrollTop = feed.scrollHeight;
+                    } else {
+                        this.unreadChatCount = (this.unreadChatCount || 0) + 1;
+                        this.updateChatBadge();
+                        this.showToast(`💬 Tài xế ${msg.senderName || ''}: ${msg.text}`, 'info', 4500);
+                    }
+                }
+            });
+        }
+    }
+
+    updateChatBadge() {
+        const btnChat = document.getElementById('btn-chat-driver');
+        if (!btnChat) return;
+        let badge = btnChat.querySelector('.chat-unread-badge');
+        if (this.unreadChatCount && this.unreadChatCount > 0) {
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'chat-unread-badge';
+                badge.style.cssText = 'position:absolute; top:-6px; right:-6px; background:#ef4444; color:#fff; font-size:0.7rem; font-weight:800; border-radius:9999px; padding:1px 6px; box-shadow:0 2px 4px rgba(0,0,0,0.25);';
+                btnChat.style.position = 'relative';
+                btnChat.appendChild(badge);
+            }
+            badge.textContent = this.unreadChatCount;
+            badge.style.display = 'inline-block';
+        } else if (badge) {
+            badge.style.display = 'none';
+        }
     }
 
     /**
@@ -6317,6 +6377,9 @@ class CustomerAppController {
 }
 
 // Global initialization
+if (typeof window !== 'undefined') {
+    window.CustomerAppController = CustomerAppController;
+}
 document.addEventListener('DOMContentLoaded', () => {
     window.customerAppController = new CustomerAppController();
     window.customerAppController.init();

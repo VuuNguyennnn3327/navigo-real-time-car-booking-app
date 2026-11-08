@@ -724,115 +724,6 @@ class RealtimeSyncManager {
     }
 
     /**
-     * 7b. Cập nhật trạng thái trực tuyến / ngoại tuyến thời gian thực của khách hàng
-     * @param {string} customerId 
-     * @param {boolean} isOnline 
-     * @param {Object} customerData 
-     */
-    async setCustomerOnline(customerId, isOnline, customerData = {}) {
-        if (!customerId) return;
-        const payload = {
-            id: customerId,
-            isOnline: !!isOnline,
-            updatedAt: Date.now(),
-            ...customerData
-        };
-
-        if (this.isAvailable()) {
-            try {
-                const onlineRef = this.db.ref(`goride_online_customers/${customerId}`);
-                if (isOnline) {
-                    await onlineRef.set(payload);
-                    onlineRef.onDisconnect().remove();
-                } else {
-                    onlineRef.onDisconnect().cancel();
-                    await onlineRef.remove();
-                }
-            } catch (err) {}
-        }
-
-        if (this.databaseURL) {
-            try {
-                if (isOnline) {
-                    await this._restPut(`goride_online_customers/${customerId}`, payload);
-                } else {
-                    await this._restDelete(`goride_online_customers/${customerId}`);
-                }
-            } catch (e) {}
-        }
-
-        try {
-            const customers = JSON.parse(localStorage.getItem('goride_online_customers') || '{}');
-            if (isOnline) {
-                customers[customerId] = payload;
-            } else {
-                delete customers[customerId];
-            }
-            localStorage.setItem('goride_online_customers', JSON.stringify(customers));
-        } catch (e) {}
-    }
-
-    /**
-     * 7c. Lắng nghe danh sách khách hàng trực tuyến thời gian thực
-     * @param {Function} callback 
-     */
-    listenOnlineCustomers(callback) {
-        if (typeof callback !== 'function') return () => {};
-
-        const isLiveCustomer = (c) => {
-            if (!c || c.isOnline === false) return false;
-            const lastTime = c.updatedAt ? (typeof c.updatedAt === 'number' ? c.updatedAt : new Date(c.updatedAt).getTime()) : 0;
-            if (lastTime && (Date.now() - lastTime > 120000)) return false;
-            return true;
-        };
-
-        if (this.databaseURL) {
-            this._restGet('goride_online_customers').then(data => {
-                if (data && typeof data === 'object') {
-                    const onlineList = Object.values(data).filter(isLiveCustomer);
-                    callback(onlineList);
-                }
-            }).catch(() => {});
-        }
-
-        let firebaseUnsub = null;
-        const attachFirebase = () => {
-            if (this.isAvailable()) {
-                const custRef = this.db.ref('goride_online_customers');
-                const handler = (snapshot) => {
-                    const data = snapshot.val() || {};
-                    const onlineList = Object.values(data).filter(isLiveCustomer);
-                    callback(onlineList);
-                };
-                custRef.on('value', handler);
-                return () => custRef.off('value', handler);
-            }
-            return null;
-        };
-
-        firebaseUnsub = attachFirebase();
-        this.onReady(() => {
-            if (!firebaseUnsub) firebaseUnsub = attachFirebase();
-        });
-
-        const storageHandler = (e) => {
-            if (e.key === 'goride_online_customers') {
-                try {
-                    const raw = JSON.parse(e.newValue || '{}');
-                    const list = (Array.isArray(raw) ? raw : Object.values(raw)).filter(isLiveCustomer);
-                    callback(list);
-                } catch (err) {}
-            }
-        };
-
-        window.addEventListener('storage', storageHandler);
-        return () => {
-            if (firebaseUnsub) firebaseUnsub();
-            window.removeEventListener('storage', storageHandler);
-        };
-    }
-
-    /**
      * 8. Lắng nghe danh sách tất cả tài xế đang trực tuyến (cho Customer & Admin)
      * Có bộ lọc TTL (2 phút): Chỉ trả về tài xế thực sự đang hoạt động, loại bỏ ghost driver.
      * @param {Function} callback 
@@ -971,7 +862,7 @@ class RealtimeSyncManager {
     }
 
     /**
-     * 9. Dọn dẹp các tài xế ma (stale ghost drivers) & bản ghi rác trên Firebase Realtime Database
+     * 9. Dọn dẹp các tài xế ma (stale ghost drivers) trên Firebase Realtime Database
      */
     async cleanStaleDrivers() {
         if (!this.isAvailable()) return;
@@ -980,10 +871,7 @@ class RealtimeSyncManager {
             const data = snap.val() || {};
             const now = Date.now();
             Object.entries(data).forEach(([key, driver]) => {
-                if (!driver || key === 'undefined' || key === 'null' || driver.id === 'undefined' || (!driver.name && !driver.email && !driver.phone)) {
-                    this.db.ref(`goride_drivers/${key}`).remove().catch(() => {});
-                    return;
-                }
+                if (!driver) return;
                 const lastTime = driver.location?.updatedAt || (driver.updatedAt ? new Date(driver.updatedAt).getTime() : 0);
                 if (driver.isOnline && (!lastTime || (now - lastTime > 120000))) {
                     this.db.ref(`goride_drivers/${key}`).update({
@@ -992,22 +880,6 @@ class RealtimeSyncManager {
                         updatedAt: new Date().toISOString()
                     });
                     console.log(`[RealtimeSync] Đã chuyển tài xế ma sang ngoại tuyến: ${driver.name || key}`);
-                }
-            });
-
-            // Also clean corrupt or undefined entries in goride_users & goride_pending_drivers
-            const snapUsers = await this.db.ref('goride_users').once('value');
-            const dataUsers = snapUsers.val() || {};
-            Object.entries(dataUsers).forEach(([key, user]) => {
-                if (!user || key === 'undefined' || key === 'null' || user.id === 'undefined' || (!user.name && !user.email && !user.phone)) {
-                    this.db.ref(`goride_users/${key}`).remove().catch(() => {});
-                }
-            });
-            const snapPending = await this.db.ref('goride_pending_drivers').once('value');
-            const dataPending = snapPending.val() || {};
-            Object.entries(dataPending).forEach(([key, p]) => {
-                if (!p || key === 'undefined' || key === 'null' || p.id === 'undefined' || (!p.name && !p.email && !p.phone)) {
-                    this.db.ref(`goride_pending_drivers/${key}`).remove().catch(() => {});
                 }
             });
         } catch (e) {}
@@ -1280,58 +1152,43 @@ class RealtimeSyncManager {
         const normEmail = (userEmail || '').toLowerCase().trim();
         const rawPhone = (userPhone || '').trim();
         const cleanPhone = rawPhone.replace(/\D/g, '');
-        const strUserId = (userId !== undefined && userId !== null) ? String(userId).trim() : '';
 
         const isMatch = (item) => {
             if (!item || typeof item !== 'object') return false;
-            const itemId = item.id ? String(item.id).trim() : (item.userId ? String(item.userId).trim() : '');
-            if (strUserId && strUserId !== 'undefined' && (itemId === strUserId || itemId.toLowerCase() === strUserId.toLowerCase())) return true;
+            if (userId && (item.id === userId || item.userId === userId)) return true;
             if (normEmail && item.email && item.email.toLowerCase().trim() === normEmail) return true;
             if (cleanPhone) {
                 const itemPhone = (item.phone || '').toString().replace(/\D/g, '');
                 if (itemPhone && (itemPhone === cleanPhone || itemPhone.endsWith(cleanPhone) || cleanPhone.endsWith(itemPhone))) return true;
             }
-            if ((!strUserId || strUserId === 'undefined') && (!itemId || itemId === 'undefined' || itemId === 'null')) return true;
             return false;
         };
-
-        // 0. Lưu ID người dùng đã xóa vào danh sách blacklist/tombstone
-        try {
-            const deleted = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
-            if (strUserId && strUserId !== 'undefined' && !deleted.includes(strUserId)) deleted.push(strUserId);
-            if (normEmail && !deleted.includes(normEmail)) deleted.push(normEmail);
-            if (cleanPhone && !deleted.includes(cleanPhone)) deleted.push(cleanPhone);
-            localStorage.setItem('goride_deleted_user_ids', JSON.stringify(deleted));
-        } catch (e) {}
 
         // 1. Xóa khỏi Firebase Realtime Database qua SDK
         if (this.isAvailable()) {
             try {
-                if (userId && userId !== 'undefined') {
+                if (userId) {
                     await this.db.ref(`goride_users/${userId}`).remove();
                     await this.db.ref(`goride_pending_drivers/${userId}`).remove();
                     await this.db.ref(`goride_drivers/${userId}`).remove();
                     await this.db.ref(`goride_online_drivers/${userId}`).remove();
                     await this.db.ref(`goride_customers/${userId}`).remove();
                 }
-                // Luôn dọn dẹp node rác 'undefined' nếu có
-                await this.db.ref('goride_users/undefined').remove().catch(() => {});
-                await this.db.ref('goride_drivers/undefined').remove().catch(() => {});
-                await this.db.ref('goride_pending_drivers/undefined').remove().catch(() => {});
-                await this.db.ref('goride_online_drivers/undefined').remove().catch(() => {});
 
                 // Quét triệt để tất cả các bảng người dùng để xóa sạch theo email/sđt nếu có
-                const targetCollections = ['goride_users', 'goride_pending_drivers', 'goride_drivers', 'goride_online_drivers', 'goride_customers'];
-                for (const col of targetCollections) {
-                    try {
-                        const snap = await this.db.ref(col).once('value');
-                        const val = snap.val() || {};
-                        for (const [k, obj] of Object.entries(val)) {
-                            if (k === userId || k === 'undefined' || k === 'null' || isMatch(obj)) {
-                                await this.db.ref(`${col}/${k}`).remove();
+                if (normEmail || cleanPhone) {
+                    const targetCollections = ['goride_users', 'goride_pending_drivers', 'goride_drivers', 'goride_customers'];
+                    for (const col of targetCollections) {
+                        try {
+                            const snap = await this.db.ref(col).once('value');
+                            const val = snap.val() || {};
+                            for (const [k, obj] of Object.entries(val)) {
+                                if (k === userId || isMatch(obj)) {
+                                    await this.db.ref(`${col}/${k}`).remove();
+                                }
                             }
-                        }
-                    } catch (colErr) {}
+                        } catch (colErr) {}
+                    }
                 }
                 console.log(`[RealtimeSync] 🗑️ Đã xóa sạch dữ liệu người dùng ${userId || userEmail || userPhone} trên Firebase Realtime Cloud!`);
             } catch (err) {
@@ -1343,30 +1200,29 @@ class RealtimeSyncManager {
         // 2. Dual REST fallback delete
         if (this.databaseURL) {
             try {
-                if (userId && userId !== 'undefined') {
+                if (userId) {
                     await this._restDelete(`goride_users/${userId}`);
                     await this._restDelete(`goride_pending_drivers/${userId}`);
                     await this._restDelete(`goride_drivers/${userId}`);
                     await this._restDelete(`goride_online_drivers/${userId}`);
                     await this._restDelete(`goride_customers/${userId}`);
                 }
-                await this._restDelete('goride_users/undefined').catch(() => {});
-                await this._restDelete('goride_drivers/undefined').catch(() => {});
-                await this._restDelete('goride_pending_drivers/undefined').catch(() => {});
-                await this._restDelete('goride_online_drivers/undefined').catch(() => {});
 
-                const targetCols = ['goride_users', 'goride_pending_drivers', 'goride_drivers', 'goride_online_drivers'];
-                for (const col of targetCols) {
-                    try {
-                        const restData = await this._restGet(col);
-                        if (restData && typeof restData === 'object') {
-                            for (const [k, obj] of Object.entries(restData)) {
-                                if (k === userId || k === 'undefined' || k === 'null' || isMatch(obj)) {
-                                    await this._restDelete(`${col}/${k}`);
+                // REST scan & purge if email or phone provided
+                if (normEmail || cleanPhone) {
+                    const targetCols = ['goride_users', 'goride_pending_drivers', 'goride_drivers'];
+                    for (const col of targetCols) {
+                        try {
+                            const restData = await this._restGet(col);
+                            if (restData && typeof restData === 'object') {
+                                for (const [k, obj] of Object.entries(restData)) {
+                                    if (k === userId || isMatch(obj)) {
+                                        await this._restDelete(`${col}/${k}`);
+                                    }
                                 }
                             }
-                        }
-                    } catch (e) {}
+                        } catch (e) {}
+                    }
                 }
             } catch (restErr) {}
         }
@@ -1385,24 +1241,24 @@ class RealtimeSyncManager {
         // 4. Xóa sạch sẽ trong LocalStorage
         try {
             const users = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
-            const filteredUsers = users.filter(u => !isMatch(u) && u && u.id && u.id !== 'undefined');
+            const filteredUsers = users.filter(u => !isMatch(u));
             localStorage.setItem('goride_offline_users', JSON.stringify(filteredUsers));
 
             // Xóa khỏi danh sách tài xế
             const drivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
-            const filteredDrivers = drivers.filter(d => !isMatch(d) && d && d.id && d.id !== 'undefined');
+            const filteredDrivers = drivers.filter(d => !isMatch(d));
             localStorage.setItem('goride_admin_drivers', JSON.stringify(filteredDrivers));
 
             // Xóa khỏi danh sách chờ duyệt
             const pending = JSON.parse(localStorage.getItem('goride_pending_drivers') || '[]');
-            const filteredPending = pending.filter(p => !isMatch(p) && p && p.id && p.id !== 'undefined');
+            const filteredPending = pending.filter(p => !isMatch(p));
             localStorage.setItem('goride_pending_drivers', JSON.stringify(filteredPending));
 
             // Xóa khỏi online drivers
             const online = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
             if (userId && online[userId]) delete online[userId];
             for (const [k, o] of Object.entries(online)) {
-                if (k === userId || k === 'undefined' || isMatch(o)) delete online[k];
+                if (k === userId || isMatch(o)) delete online[k];
             }
             localStorage.setItem('goride_online_drivers', JSON.stringify(online));
 
@@ -1416,9 +1272,376 @@ class RealtimeSyncManager {
             targetKeys.forEach(k => {
                 try { localStorage.removeItem(k); } catch (e) {}
             });
+
+            // 5. Ghi nhớ danh sách tài khoản đã xóa (Chặn đăng nhập vĩnh viễn)
+            const deletedAccounts = JSON.parse(localStorage.getItem('goride_deleted_accounts') || '[]');
+            const deletedIds = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
+            if (userId && !deletedIds.includes(userId)) deletedIds.push(userId);
+            if (normEmail && !deletedAccounts.includes(normEmail)) deletedAccounts.push(normEmail);
+            if (cleanPhone && !deletedAccounts.includes(cleanPhone)) deletedAccounts.push(cleanPhone);
+            deletedAccounts.push({ id: userId, email: normEmail, phone: cleanPhone, deletedAt: new Date().toISOString() });
+            localStorage.setItem('goride_deleted_accounts', JSON.stringify(deletedAccounts));
+            localStorage.setItem('goride_deleted_user_ids', JSON.stringify(deletedIds));
+
+            // Sync deleted blacklist to Firebase
+            if (this.isAvailable()) {
+                try {
+                    if (userId) await this.db.ref(`goride_deleted_accounts/${userId}`).set({ id: userId, email: normEmail, phone: cleanPhone, deletedAt: new Date().toISOString() });
+                } catch (e) {}
+            }
+
+            // 6. Cưỡng chế đăng xuất ngay lập tức nếu tài khoản đang online
+            localStorage.setItem('goride_force_logout_event', JSON.stringify({
+                userId,
+                userEmail: normEmail,
+                userPhone: cleanPhone,
+                reason: 'deleted',
+                timestamp: Date.now()
+            }));
         } catch (e) {}
 
         return true;
+    }
+
+    /**
+     * Khóa hoặc mở khóa tài khoản người dùng / tài xế
+     * @param {string} userId
+     * @param {string} userEmail
+     * @param {string} userPhone
+     * @param {string} status - 'locked' | 'active'
+     */
+    async lockUser(userId, userEmail = '', userPhone = '', status = 'locked') {
+        if (!userId && !userEmail && !userPhone) return false;
+        const normEmail = (userEmail || '').toLowerCase().trim();
+        const cleanPhone = (userPhone || '').toString().replace(/\D/g, '');
+        const isLocking = (status === 'locked');
+
+        // 1. Firebase Cloud Sync
+        if (this.isAvailable()) {
+            try {
+                if (userId) {
+                    await this.db.ref(`goride_users/${userId}`).update({ status, updatedAt: new Date().toISOString() });
+                    await this.db.ref(`goride_drivers/${userId}`).update({ status, updatedAt: new Date().toISOString() });
+                    if (isLocking) {
+                        await this.db.ref(`goride_online_drivers/${userId}`).remove();
+                        await this.db.ref(`goride_force_logouts/${userId}`).set({ reason: 'locked', timestamp: Date.now() });
+                    }
+                }
+            } catch (err) {}
+        }
+        if (this.databaseURL && typeof this._restPatch === 'function') {
+            try {
+                if (userId) {
+                    await this._restPatch(`goride_users/${userId}`, { status, updatedAt: new Date().toISOString() });
+                    await this._restPatch(`goride_drivers/${userId}`, { status, updatedAt: new Date().toISOString() });
+                }
+            } catch (e) {}
+        }
+
+        // 2. LocalStorage Persistence
+        try {
+            let lockedIds = JSON.parse(localStorage.getItem('goride_locked_user_ids') || '[]');
+            if (isLocking) {
+                if (userId && !lockedIds.includes(userId)) lockedIds.push(userId);
+                if (normEmail && !lockedIds.includes(normEmail)) lockedIds.push(normEmail);
+                if (cleanPhone && !lockedIds.includes(cleanPhone)) lockedIds.push(cleanPhone);
+            } else {
+                lockedIds = lockedIds.filter(id => id !== userId && id !== normEmail && id !== cleanPhone);
+            }
+            localStorage.setItem('goride_locked_user_ids', JSON.stringify(lockedIds));
+
+            // Update in goride_offline_users
+            const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
+            offlineUsers.forEach(u => {
+                if (u && (u.id === userId || (normEmail && u.email && u.email.toLowerCase() === normEmail) || (cleanPhone && u.phone && u.phone.replace(/\D/g, '') === cleanPhone))) {
+                    u.status = status;
+                }
+            });
+            localStorage.setItem('goride_offline_users', JSON.stringify(offlineUsers));
+
+            // Update in goride_admin_drivers
+            const adminDrivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
+            adminDrivers.forEach(d => {
+                if (d && (d.id === userId || (normEmail && d.email && d.email.toLowerCase() === normEmail) || (cleanPhone && d.phone && d.phone.replace(/\D/g, '') === cleanPhone))) {
+                    d.status = status;
+                }
+            });
+            localStorage.setItem('goride_admin_drivers', JSON.stringify(adminDrivers));
+
+            // 3. Nếu khóa: Phát sự kiện cưỡng chế đăng xuất tức thì cho mọi tab đang mở
+            if (isLocking) {
+                localStorage.setItem('goride_force_logout_event', JSON.stringify({
+                    userId,
+                    userEmail: normEmail,
+                    userPhone: cleanPhone,
+                    reason: 'locked',
+                    timestamp: Date.now()
+                }));
+            }
+        } catch (e) {}
+
+        return true;
+    }
+
+    /**
+     * Kiểm tra nhanh xem tài khoản có bị khóa không
+     * @param {string} identifier - id, email, hoặc sđt
+     */
+    isUserLocked(identifier) {
+        if (!identifier) return false;
+        const norm = String(identifier).toLowerCase().trim();
+        const clean = norm.replace(/\D/g, '');
+        try {
+            const lockedIds = JSON.parse(localStorage.getItem('goride_locked_user_ids') || '[]');
+            if (lockedIds.some(id => String(id).toLowerCase() === norm || (clean && String(id).replace(/\D/g, '') === clean))) {
+                return true;
+            }
+            const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
+            const u = offlineUsers.find(x => x && (x.id === norm || (x.email && x.email.toLowerCase() === norm) || (clean && x.phone && x.phone.replace(/\D/g, '') === clean)));
+            if (u && u.status === 'locked') return true;
+        } catch (e) {}
+        return false;
+    }
+
+    /**
+     * Kiểm tra nhanh xem tài khoản có bị xóa không
+     * @param {string} identifier - id, email, hoặc sđt
+     */
+    isUserDeleted(identifier) {
+        if (!identifier) return false;
+        const norm = String(identifier).toLowerCase().trim();
+        const clean = norm.replace(/\D/g, '');
+        try {
+            const deletedIds = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
+            if (deletedIds.some(id => String(id).toLowerCase() === norm || (clean && String(id).replace(/\D/g, '') === clean))) {
+                return true;
+            }
+            const deletedAccounts = JSON.parse(localStorage.getItem('goride_deleted_accounts') || '[]');
+            if (deletedAccounts.some(a => {
+                if (!a) return false;
+                if (typeof a === 'string') return a.toLowerCase() === norm || (clean && a.replace(/\D/g, '') === clean);
+                return (a.id && a.id.toLowerCase() === norm) ||
+                       (a.email && a.email.toLowerCase() === norm) ||
+                       (clean && a.phone && a.phone.replace(/\D/g, '') === clean);
+            })) {
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    /**
+     * Cập nhật trạng thái trực tuyến / ngoại tuyến theo thời gian thực (Presence) cho tài khoản
+     * @param {string} userId
+     * @param {boolean} isOnline
+     * @param {Object} userData
+     */
+    async setUserPresence(userId, isOnline, userData = {}) {
+        if (!userId) return;
+        const normId = String(userId).trim();
+        const normEmail = (userData.email || '').toLowerCase().trim();
+        const cleanPhone = (userData.phone || '').replace(/\D/g, '');
+        const role = userData.role || (normId.startsWith('drv_') ? 'driver' : 'customer');
+        const now = Date.now();
+
+        const presenceObj = {
+            id: normId,
+            email: normEmail,
+            phone: cleanPhone,
+            name: userData.name || '',
+            role: role,
+            isOnline: !!isOnline,
+            lastSeen: now,
+            updatedAt: new Date().toISOString()
+        };
+
+        // 1. Firebase Cloud Presence
+        if (this.isAvailable()) {
+            try {
+                const presenceRef = this.db.ref(`goride_user_presence/${normId}`);
+                if (isOnline) {
+                    await presenceRef.set(presenceObj);
+                    presenceRef.onDisconnect().update({
+                        isOnline: false,
+                        lastSeen: Date.now(),
+                        updatedAt: new Date().toISOString()
+                    });
+                } else {
+                    await presenceRef.update({
+                        isOnline: false,
+                        lastSeen: now,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            } catch (err) {}
+        }
+        if (this.databaseURL && typeof this._restPut === 'function') {
+            try {
+                if (isOnline) {
+                    await this._restPut(`goride_user_presence/${normId}`, presenceObj);
+                } else {
+                    await this._restPatch(`goride_user_presence/${normId}`, {
+                        isOnline: false,
+                        lastSeen: now,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            } catch (e) {}
+        }
+
+        // 2. LocalStorage Presence Map
+        try {
+            const pMap = JSON.parse(localStorage.getItem('goride_user_presence') || '{}');
+            pMap[normId] = presenceObj;
+            if (normEmail) pMap[normEmail] = presenceObj;
+            if (cleanPhone) pMap[cleanPhone] = presenceObj;
+            localStorage.setItem('goride_user_presence', JSON.stringify(pMap));
+
+            // Broadcast event cross-tab & same window
+            window.dispatchEvent(new CustomEvent('goride:presence_changed', { detail: presenceObj }));
+        } catch (e) {}
+    }
+
+    /**
+     * Lấy toàn bộ bản đồ trạng thái Presence hiện tại
+     * @returns {Object}
+     */
+    getUserPresenceMap() {
+        try {
+            return JSON.parse(localStorage.getItem('goride_user_presence') || '{}');
+        } catch (e) {
+            return {};
+        }
+    }
+
+    /**
+     * Kiểm tra xem tài khoản người dùng có đang trực tuyến (Online) hay không
+     * Dựa trên nhịp tim (heartbeat) thời gian thực và trạng thái khóa/xóa
+     * @param {string} userId
+     * @param {string} [email]
+     * @param {string} [phone]
+     * @returns {boolean}
+     */
+    isUserOnline(userId, email, phone) {
+        if (this.isUserLocked(userId) || this.isUserLocked(email) || this.isUserLocked(phone)) {
+            return false;
+        }
+        if (this.isUserDeleted(userId) || this.isUserDeleted(email) || this.isUserDeleted(phone)) {
+            return false;
+        }
+
+        const now = Date.now();
+        const TTL_MS = 90000; // 90 seconds timeout
+
+        // A. Check active logged-in user in current window/session
+        try {
+            const curUser = JSON.parse(localStorage.getItem('goride_user') || sessionStorage.getItem('goride_user') || 'null');
+            if (curUser && curUser.id) {
+                const isMatch = (userId && curUser.id === userId) ||
+                                (email && curUser.email && curUser.email.toLowerCase() === String(email).toLowerCase()) ||
+                                (phone && curUser.phone && curUser.phone.replace(/\D/g, '') === String(phone).replace(/\D/g, ''));
+                if (isMatch && localStorage.getItem('goride_logged_out') !== '1') {
+                    return true;
+                }
+            }
+        } catch (e) {}
+
+        // B. Check presence map
+        try {
+            const pMap = this.getUserPresenceMap();
+            const normId = userId ? String(userId).trim() : null;
+            const normEmail = email ? String(email).toLowerCase().trim() : null;
+            const cleanPhone = phone ? String(phone).replace(/\D/g, '') : null;
+
+            const entry = (normId && pMap[normId]) || (normEmail && pMap[normEmail]) || (cleanPhone && pMap[cleanPhone]);
+            if (entry && entry.isOnline) {
+                const last = entry.lastSeen || (entry.updatedAt ? new Date(entry.updatedAt).getTime() : 0);
+                if (now - last < TTL_MS) {
+                    return true;
+                }
+            }
+        } catch (e) {}
+
+        return false;
+    }
+
+    /**
+     * Kiểm tra xem tài xế có đang trực tuyến (Online / Sẵn sàng) hay không
+     * @param {string} driverId
+     * @param {string} [email]
+     * @param {string} [phone]
+     * @returns {boolean}
+     */
+    isDriverOnline(driverId, email, phone) {
+        if (this.isUserLocked(driverId) || this.isUserLocked(email) || this.isUserLocked(phone)) {
+            return false;
+        }
+        if (this.isUserDeleted(driverId) || this.isUserDeleted(email) || this.isUserDeleted(phone)) {
+            return false;
+        }
+
+        const now = Date.now();
+        const TTL_MS = 120000; // 2 minutes
+
+        // Check goride_online_drivers
+        try {
+            const onlineDrivers = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
+            const d = (driverId && onlineDrivers[driverId]) || Object.values(onlineDrivers).find(x => 
+                (driverId && x.id === driverId) ||
+                (email && x.email && x.email.toLowerCase() === String(email).toLowerCase()) ||
+                (phone && x.phone && x.phone.replace(/\D/g, '') === String(phone).replace(/\D/g, ''))
+            );
+            if (d && (d.isOnline || d.status === 'available' || d.status === 'active')) {
+                const last = d.location?.updatedAt ? new Date(d.location.updatedAt).getTime() : (d.updatedAt ? new Date(d.updatedAt).getTime() : 0);
+                if (!last || (now - last < TTL_MS)) {
+                    return true;
+                }
+            }
+        } catch (e) {}
+
+        // Fallback check user presence
+        return this.isUserOnline(driverId, email, phone);
+    }
+
+    /**
+     * Lắng nghe biến động trạng thái Presence thời gian thực
+     * @param {Function} callback
+     * @returns {Function} Unsubscribe
+     */
+    listenUserPresence(callback) {
+        if (typeof callback !== 'function') return () => {};
+
+        let fbUnsub = null;
+        if (this.isAvailable()) {
+            const pRef = this.db.ref('goride_user_presence');
+            const h = (snap) => {
+                const val = snap.val() || {};
+                try {
+                    const localMap = JSON.parse(localStorage.getItem('goride_user_presence') || '{}');
+                    const merged = { ...localMap, ...val };
+                    localStorage.setItem('goride_user_presence', JSON.stringify(merged));
+                } catch (e) {}
+                callback(val);
+            };
+            pRef.on('value', h);
+            fbUnsub = () => pRef.off('value', h);
+        }
+
+        const storageH = (e) => {
+            if (e.key === 'goride_user_presence' || e.key === 'goride_online_drivers' || e.key === 'goride_user') {
+                callback(this.getUserPresenceMap());
+            }
+        };
+        window.addEventListener('storage', storageH);
+
+        const customH = () => callback(this.getUserPresenceMap());
+        window.addEventListener('goride:presence_changed', customH);
+
+        return () => {
+            if (fbUnsub) fbUnsub();
+            window.removeEventListener('storage', storageH);
+            window.removeEventListener('goride:presence_changed', customH);
+        };
     }
 
     /* ==========================================================================
@@ -1635,16 +1858,19 @@ class RealtimeSyncManager {
      * 23. Lưu đánh giá cuốc xe (Khách hàng đánh giá Tài xế)
      * Cập nhật cuốc xe, lịch sử đánh giá và điểm trung bình của tài xế
      * @param {string} tripId
-     * @param {Object} ratingData - { rating, feedback, driverId, userKey, customerName, driverName }
+     * @param {Object} ratingData - { rating, feedback, driverId, driverName, driverPhone, userKey, customerId, customerName, customerPhone }
      */
     async saveTripRating(tripId, ratingData = {}) {
         if (!tripId) return false;
         const rating = Number(ratingData.rating || 5);
         const feedback = ratingData.feedback || '';
         const driverId = ratingData.driverId;
-        const userKey = ratingData.userKey;
-        const customerName = ratingData.customerName || 'Khách hàng';
         const driverName = ratingData.driverName || 'Tài xế';
+        const driverPhone = ratingData.driverPhone || '';
+        const userKey = ratingData.userKey || ratingData.customerId;
+        const customerId = ratingData.customerId || userKey || '';
+        const customerName = ratingData.customerName || 'Khách hàng';
+        const customerPhone = ratingData.customerPhone || '';
 
         const tripPatch = {
             rating: rating,
@@ -1671,24 +1897,37 @@ class RealtimeSyncManager {
             } catch (e) {}
         }
 
+        const rateEntry = {
+            id: 'rate_c2d_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+            tripId: tripId,
+            fromRole: 'customer',
+            toRole: 'driver',
+            fromUserId: customerId,
+            fromUserName: customerName,
+            fromUserPhone: customerPhone,
+            toUserId: driverId || '',
+            toUserName: driverName,
+            toUserPhone: driverPhone,
+            rating: rating,
+            feedback: feedback,
+            createdAt: new Date().toISOString()
+        };
+
         // 3. Lưu vào lịch sử đánh giá hệ thống (navigo_ratings_history)
         try {
             const ratingsHistory = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
-            ratingsHistory.unshift({
-                id: 'rate_c2d_' + Date.now(),
-                tripId: tripId,
-                fromRole: 'customer',
-                toRole: 'driver',
-                fromUserId: userKey || '',
-                fromUserName: customerName,
-                toUserId: driverId || '',
-                toUserName: driverName,
-                rating: rating,
-                feedback: feedback,
-                createdAt: new Date().toISOString()
-            });
+            ratingsHistory.unshift(rateEntry);
             localStorage.setItem('navigo_ratings_history', JSON.stringify(ratingsHistory));
         } catch (e) {}
+
+        // Đồng bộ lên Firebase Realtime Database node goride_ratings
+        try {
+            if (this.isAvailable()) {
+                await this.db.ref(`goride_ratings/${rateEntry.id}`).set(rateEntry);
+            } else if (this.databaseURL && typeof this._restPut === 'function') {
+                await this._restPut(`goride_ratings/${rateEntry.id}`, rateEntry);
+            }
+        } catch (fbErr) {}
 
         // 4. Cập nhật vào goride_admin_trips & goride_active_trip
         try {
@@ -1714,7 +1953,9 @@ class RealtimeSyncManager {
             const ratingsHistory = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
             const driverRatings = ratingsHistory.filter(r => 
                 r && r.toRole === 'driver' && 
-                ((driverId && r.toUserId === driverId) || (driverName && r.toUserName === driverName))
+                ((driverId && r.toUserId === driverId) || 
+                 (driverPhone && r.toUserPhone && r.toUserPhone.replace(/\D/g, '') === driverPhone.replace(/\D/g, '')) || 
+                 (driverName && r.toUserName === driverName))
             );
             
             let totalScore = 0;
@@ -1730,7 +1971,7 @@ class RealtimeSyncManager {
             // Cập nhật goride_admin_drivers
             const adminDrivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
             adminDrivers.forEach(d => {
-                if (driverId ? d.id === driverId : (driverName && d.name === driverName)) {
+                if ((driverId && d.id === driverId) || (driverPhone && d.phone && d.phone.replace(/\D/g, '') === driverPhone.replace(/\D/g, '')) || (driverName && d.name === driverName)) {
                     d.rating = avgRating;
                     d.ratingCount = count;
                 }
@@ -1740,7 +1981,7 @@ class RealtimeSyncManager {
             // Cập nhật goride_offline_users nếu là driver
             const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
             offlineUsers.forEach(u => {
-                if (u.role === 'driver' && (driverId ? u.id === driverId : (driverName && u.name === driverName))) {
+                if (u.role === 'driver' && ((driverId && u.id === driverId) || (driverPhone && u.phone && u.phone.replace(/\D/g, '') === driverPhone.replace(/\D/g, '')) || (driverName && u.name === driverName))) {
                     u.rating = avgRating;
                     u.ratingCount = count;
                 }
@@ -1749,7 +1990,7 @@ class RealtimeSyncManager {
 
             // Cập nhật current user nếu là driver
             const curUser = JSON.parse(localStorage.getItem('goride_user') || '{}');
-            if (curUser && curUser.role === 'driver' && (driverId ? curUser.id === driverId : (driverName && curUser.name === driverName))) {
+            if (curUser && curUser.role === 'driver' && ((driverId && curUser.id === driverId) || (driverPhone && curUser.phone && curUser.phone.replace(/\D/g, '') === driverPhone.replace(/\D/g, '')) || (driverName && curUser.name === driverName))) {
                 curUser.rating = avgRating;
                 curUser.ratingCount = count;
                 localStorage.setItem('goride_user', JSON.stringify(curUser));
@@ -1767,6 +2008,7 @@ class RealtimeSyncManager {
                 };
                 if (this.isAvailable()) {
                     await this.db.ref('goride_drivers/' + driverId).update(driverPatch);
+                    await this.db.ref('goride_users/' + driverId).update(driverPatch);
                 } else if (this.databaseURL) {
                     await this._restPatch('goride_drivers/' + driverId, driverPatch);
                 }
@@ -1784,7 +2026,7 @@ class RealtimeSyncManager {
      * 24. Lưu đánh giá hành khách (Tài xế đánh giá Khách hàng)
      * Cập nhật cuốc xe, lịch sử đánh giá và điểm trung bình của khách hàng
      * @param {string} tripId
-     * @param {Object} ratingData - { rating, feedback, tags, customerId, customerName, customerPhone, driverId, driverName }
+     * @param {Object} ratingData - { rating, feedback, tags, customerId, customerName, customerPhone, driverId, driverName, driverPhone }
      */
     async saveCustomerRating(tripId, ratingData = {}) {
         if (!tripId) return false;
@@ -1796,6 +2038,7 @@ class RealtimeSyncManager {
         const customerPhone = ratingData.customerPhone || '';
         const driverId = ratingData.driverId || '';
         const driverName = ratingData.driverName || 'Tài xế';
+        const driverPhone = ratingData.driverPhone || '';
 
         const tripPatch = {
             driverRatingToCustomer: rating,
@@ -1807,26 +2050,38 @@ class RealtimeSyncManager {
         // 1. Cập nhật chuyến đi trên Database
         await this.updateTripStatus(tripId, 'COMPLETED', tripPatch);
 
+        const rateEntry = {
+            id: 'rate_d2c_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+            tripId: tripId,
+            fromRole: 'driver',
+            toRole: 'customer',
+            fromUserId: driverId,
+            fromUserName: driverName,
+            fromUserPhone: driverPhone,
+            toUserId: customerId,
+            toUserName: customerName,
+            toUserPhone: customerPhone,
+            rating: rating,
+            feedback: feedback,
+            tags: tags,
+            createdAt: new Date().toISOString()
+        };
+
         // 2. Lưu vào lịch sử đánh giá hệ thống (navigo_ratings_history)
         try {
             const ratingsHistory = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
-            ratingsHistory.unshift({
-                id: 'rate_d2c_' + Date.now(),
-                tripId: tripId,
-                fromRole: 'driver',
-                toRole: 'customer',
-                fromUserId: driverId,
-                fromUserName: driverName,
-                toUserId: customerId,
-                toUserName: customerName,
-                toUserPhone: customerPhone,
-                rating: rating,
-                feedback: feedback,
-                tags: tags,
-                createdAt: new Date().toISOString()
-            });
+            ratingsHistory.unshift(rateEntry);
             localStorage.setItem('navigo_ratings_history', JSON.stringify(ratingsHistory));
         } catch (e) {}
+
+        // Đồng bộ lên Firebase Realtime Database node goride_ratings
+        try {
+            if (this.isAvailable()) {
+                await this.db.ref(`goride_ratings/${rateEntry.id}`).set(rateEntry);
+            } else if (this.databaseURL && typeof this._restPut === 'function') {
+                await this._restPut(`goride_ratings/${rateEntry.id}`, rateEntry);
+            }
+        } catch (fbErr) {}
 
         // 3. Cập nhật vào goride_admin_trips & goride_active_trip & goride_driver_trips
         try {
@@ -1861,7 +2116,9 @@ class RealtimeSyncManager {
             const ratingsHistory = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
             const custRatings = ratingsHistory.filter(r => 
                 r && r.toRole === 'customer' && 
-                ((customerId && r.toUserId === customerId) || (customerPhone && r.toUserPhone === customerPhone) || (customerName && r.toUserName === customerName))
+                ((customerId && r.toUserId === customerId) || 
+                 (customerPhone && r.toUserPhone && r.toUserPhone.replace(/\D/g, '') === customerPhone.replace(/\D/g, '')) || 
+                 (customerName && r.toUserName === customerName))
             );
             
             let totalScore = 0;
@@ -1881,7 +2138,9 @@ class RealtimeSyncManager {
             const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
             offlineUsers.forEach(u => {
                 if (u.role === 'customer' || !u.role) {
-                    const matchCust = (customerId && u.id === customerId) || (customerPhone && u.phone === customerPhone) || (customerName && u.name === customerName);
+                    const matchCust = (customerId && u.id === customerId) || 
+                                     (customerPhone && u.phone && u.phone.replace(/\D/g, '') === customerPhone.replace(/\D/g, '')) || 
+                                     (customerName && u.name === customerName);
                     if (matchCust) {
                         u.rating = avgRating;
                         u.ratingCount = count;
@@ -1892,7 +2151,10 @@ class RealtimeSyncManager {
 
             // Cập nhật current user nếu đúng là khách hàng được đánh giá
             const curUser = JSON.parse(localStorage.getItem('goride_user') || '{}');
-            const matchCurCust = curUser && curUser.role !== 'driver' && ((customerId && curUser.id === customerId) || (customerPhone && curUser.phone === customerPhone) || (customerName && curUser.name === customerName));
+            const matchCurCust = curUser && curUser.role !== 'driver' && 
+                                ((customerId && curUser.id === customerId) || 
+                                 (customerPhone && curUser.phone && curUser.phone.replace(/\D/g, '') === customerPhone.replace(/\D/g, '')) || 
+                                 (customerName && curUser.name === customerName));
             if (matchCurCust) {
                 curUser.rating = avgRating;
                 curUser.ratingCount = count;
@@ -1902,7 +2164,7 @@ class RealtimeSyncManager {
                 }
             }
 
-            // Sync to Firebase customer node if available
+            // Sync to Firebase user node if available
             if (customerId) {
                 const customerPatch = {
                     rating: avgRating,
@@ -1910,6 +2172,7 @@ class RealtimeSyncManager {
                     updatedAt: new Date().toISOString()
                 };
                 if (this.isAvailable()) {
+                    await this.db.ref('goride_users/' + customerId).update(customerPatch);
                     await this.db.ref('goride_customers/' + customerId).update(customerPatch);
                 } else if (this.databaseURL) {
                     await this._restPatch('goride_customers/' + customerId, customerPatch);
@@ -1931,9 +2194,10 @@ class RealtimeSyncManager {
      * @param {string} userIdOrPhone
      * @param {string} role - 'driver' | 'customer'
      * @param {string} [userPhone] - SĐT bổ sung để đối soát chính xác
+     * @param {string} [userName] - Tên tài khoản để đối soát cô lập theo từng tài khoản
      * @returns {Object} { average, count, reviews, starsBreakdown, badges }
      */
-    getCounterpartyRating(userIdOrPhone = '', role = 'customer', userPhone = '') {
+    getCounterpartyRating(userIdOrPhone = '', role = 'customer', userPhone = '', userName = '') {
         try {
             const isDriver = (role === 'driver');
             const targetRole = isDriver ? 'driver' : 'customer'; // role of the person being rated
@@ -1943,14 +2207,15 @@ class RealtimeSyncManager {
             const cleanDigits1 = cleanId.replace(/\D/g, '');
             const rawPhone = String(userPhone || '').trim();
             const cleanDigits2 = rawPhone.replace(/\D/g, '');
+            const cleanName = String(userName || '').trim().toLowerCase();
 
             // Nếu không có bất kỳ thông tin định danh nào của người dùng, không gán lung tung đánh giá của người khác
-            if (!cleanId && !cleanDigits1 && !cleanDigits2) {
+            if (!cleanId && !cleanDigits1 && !cleanDigits2 && !cleanName) {
                 return {
                     average: 5.0,
                     count: 0,
                     reviews: [],
-                    starsBreakdown: { 5: 100, 4: 0, 3: 0, 2: 0, 1: 0 },
+                    starsBreakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
                     badges: isDriver ? ['Lái xe an toàn', 'Thân thiện', 'Xe sạch sẽ'] : ['Thân thiện', 'Đúng giờ', 'Lịch sự']
                 };
             }
@@ -1960,9 +2225,10 @@ class RealtimeSyncManager {
                 if (cleanId && (r.toUserId === cleanId || r.toUserPhone === cleanId)) return true;
                 if (r.toUserPhone) {
                     const rDigits = String(r.toUserPhone).replace(/\D/g, '');
-                    if (cleanDigits1 && rDigits && (rDigits === cleanDigits1 || rDigits.endsWith(cleanDigits1) || cleanDigits1.endsWith(rDigits))) return true;
-                    if (cleanDigits2 && rDigits && (rDigits === cleanDigits2 || rDigits.endsWith(cleanDigits2) || cleanDigits2.endsWith(rDigits))) return true;
+                    if (cleanDigits1.length >= 7 && rDigits.length >= 7 && (rDigits === cleanDigits1 || rDigits.endsWith(cleanDigits1) || cleanDigits1.endsWith(rDigits))) return true;
+                    if (cleanDigits2.length >= 7 && rDigits.length >= 7 && (rDigits === cleanDigits2 || rDigits.endsWith(cleanDigits2) || cleanDigits2.endsWith(rDigits))) return true;
                 }
+                if (cleanName && r.toUserName && r.toUserName.trim().toLowerCase() === cleanName) return true;
                 return false;
             };
 
@@ -1980,9 +2246,10 @@ class RealtimeSyncManager {
                     if (cleanId && (t.driverId === cleanId || t.driverPhone === cleanId)) isTargetDriver = true;
                     if (t.driverPhone) {
                         const dDigits = String(t.driverPhone).replace(/\D/g, '');
-                        if (cleanDigits1 && dDigits && (dDigits === cleanDigits1 || dDigits.endsWith(cleanDigits1) || cleanDigits1.endsWith(dDigits))) isTargetDriver = true;
-                        if (cleanDigits2 && dDigits && (dDigits === cleanDigits2 || dDigits.endsWith(cleanDigits2) || cleanDigits2.endsWith(dDigits))) isTargetDriver = true;
+                        if (cleanDigits1.length >= 7 && dDigits.length >= 7 && (dDigits === cleanDigits1 || dDigits.endsWith(cleanDigits1) || cleanDigits1.endsWith(dDigits))) isTargetDriver = true;
+                        if (cleanDigits2.length >= 7 && dDigits.length >= 7 && (dDigits === cleanDigits2 || dDigits.endsWith(cleanDigits2) || cleanDigits2.endsWith(dDigits))) isTargetDriver = true;
                     }
+                    if (cleanName && t.driverName && t.driverName.trim().toLowerCase() === cleanName) isTargetDriver = true;
 
                     if (isTargetDriver && !matched.some(m => m.tripId === t.id && m.fromRole === 'customer')) {
                         matched.push({
@@ -2007,9 +2274,10 @@ class RealtimeSyncManager {
                     if (cleanId && (t.customerId === cleanId || t.customerPhone === cleanId || t.userId === cleanId)) isTargetCust = true;
                     if (t.customerPhone) {
                         const cDigits = String(t.customerPhone).replace(/\D/g, '');
-                        if (cleanDigits1 && cDigits && (cDigits === cleanDigits1 || cDigits.endsWith(cleanDigits1) || cleanDigits1.endsWith(cDigits))) isTargetCust = true;
-                        if (cleanDigits2 && cDigits && (cDigits === cleanDigits2 || cDigits.endsWith(cleanDigits2) || cleanDigits2.endsWith(cDigits))) isTargetCust = true;
+                        if (cleanDigits1.length >= 7 && cDigits.length >= 7 && (cDigits === cleanDigits1 || cDigits.endsWith(cleanDigits1) || cleanDigits1.endsWith(cDigits))) isTargetCust = true;
+                        if (cleanDigits2.length >= 7 && cDigits.length >= 7 && (cDigits === cleanDigits2 || cDigits.endsWith(cleanDigits2) || cleanDigits2.endsWith(cDigits))) isTargetCust = true;
                     }
+                    if (cleanName && t.customerName && t.customerName.trim().toLowerCase() === cleanName) isTargetCust = true;
 
                     if (isTargetCust && !matched.some(m => m.tripId === t.id && m.fromRole === 'driver')) {
                         matched.push({
@@ -2039,7 +2307,7 @@ class RealtimeSyncManager {
                     average: 5.0,
                     count: 0,
                     reviews: [],
-                    starsBreakdown: { 5: 100, 4: 0, 3: 0, 2: 0, 1: 0 },
+                    starsBreakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
                     badges: isDriver ? ['Lái xe an toàn', 'Thân thiện', 'Xe sạch sẽ'] : ['Thân thiện', 'Đúng giờ', 'Lịch sự']
                 };
             }
@@ -2079,11 +2347,212 @@ class RealtimeSyncManager {
                 average: 5.0,
                 count: 0,
                 reviews: [],
-                starsBreakdown: { 5: 100, 4: 0, 3: 0, 2: 0, 1: 0 },
+                starsBreakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
                 badges: role === 'driver' ? ['Lái xe an toàn', 'Thân thiện', 'Xe sạch sẽ'] : ['Thân thiện', 'Đúng giờ', 'Lịch sự']
             };
         }
     }
+    /* ==========================================================================
+       REAL-TIME IN-TRIP CHAT ENGINE (DRIVER <-> CUSTOMER)
+       ========================================================================== */
+
+    /**
+     * Lấy danh sách tin nhắn chat của chuyến đi, khử trùng lặp theo ID
+     * @param {string} tripId
+     * @returns {Array} Danh sách tin nhắn sắp xếp theo thời gian
+     */
+    getTripChatMessages(tripId) {
+        if (!tripId) return [];
+        try {
+            const raw = localStorage.getItem('goride_chat_' + tripId);
+            const list = raw ? JSON.parse(raw) : [];
+            const seen = new Set();
+            const unique = [];
+            list.forEach(m => {
+                if (m && m.id && !seen.has(m.id)) {
+                    seen.add(m.id);
+                    unique.push(m);
+                }
+            });
+            unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            return unique;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * Gửi tin nhắn chat trong cuốc xe đang hoạt động
+     * @param {string} tripId
+     * @param {Object} msgData - { text, senderRole, senderId, senderName, senderAvatar }
+     * @returns {Object} Tin nhắn đã gửi
+     */
+    async sendChatMessage(tripId, msgData = {}) {
+        if (!tripId || !msgData.text) return null;
+        const text = String(msgData.text).trim();
+        if (!text) return null;
+
+        const msgId = msgData.id || `msg_${tripId}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const msg = {
+            id: msgId,
+            tripId: tripId,
+            text: text,
+            senderRole: msgData.senderRole || 'customer',
+            senderId: msgData.senderId || '',
+            senderName: msgData.senderName || (msgData.senderRole === 'driver' ? 'Tài xế' : 'Khách hàng'),
+            senderAvatar: msgData.senderAvatar || '',
+            timestamp: msgData.timestamp || new Date().toISOString(),
+            read: false
+        };
+
+        // 1. Lưu vào LocalStorage (ngay lập tức)
+        try {
+            const current = this.getTripChatMessages(tripId);
+            if (!current.some(m => m.id === msg.id)) {
+                current.push(msg);
+                localStorage.setItem('goride_chat_' + tripId, JSON.stringify(current));
+            }
+            localStorage.setItem('goride_chat_last_' + tripId, JSON.stringify(msg));
+            localStorage.setItem('goride_chat_broadcast', JSON.stringify({
+                ...msg,
+                _broadcastTime: Date.now()
+            }));
+        } catch (e) {}
+
+        // 2. Đồng bộ lên Firebase Realtime Database
+        try {
+            if (this.isAvailable()) {
+                await this.db.ref(`goride_trip_chats/${tripId}/${msg.id}`).set(msg);
+                await this.db.ref(`goride_trip_chats/${tripId}/_meta`).update({
+                    lastMessage: msg.text,
+                    lastSender: msg.senderRole,
+                    updatedAt: msg.timestamp
+                });
+            } else if (this.databaseURL && typeof this._restPut === 'function') {
+                await this._restPut(`goride_trip_chats/${tripId}/${msg.id}`, msg);
+            }
+        } catch (err) {
+            console.warn('[RealtimeSync] Cloud chat sync warning:', err.message);
+        }
+
+        // 3. Dispatch local in-page event
+        window.dispatchEvent(new CustomEvent('navigo:chat_message', { detail: msg }));
+
+        return msg;
+    }
+
+    /**
+     * Lắng nghe tin nhắn mới của cuốc xe theo thời gian thực (tránh trùng lặp)
+     * @param {string} tripId
+     * @param {Function} onMessage - Callback nhận tin nhắn mới
+     */
+    listenTripChat(tripId, onMessage) {
+        if (!tripId || typeof onMessage !== 'function') return;
+
+        this._chatListeners = this._chatListeners || new Map();
+        if (this._chatListeners.has(tripId)) {
+            return;
+        }
+
+        const seenIds = new Set();
+        const initial = this.getTripChatMessages(tripId);
+        initial.forEach(m => seenIds.add(m.id));
+
+        const handleNewMessage = (msg) => {
+            if (!msg || !msg.id || seenIds.has(msg.id)) return;
+            seenIds.add(msg.id);
+            try {
+                const msgs = this.getTripChatMessages(tripId);
+                if (!msgs.some(m => m.id === msg.id)) {
+                    msgs.push(msg);
+                    localStorage.setItem('goride_chat_' + tripId, JSON.stringify(msgs));
+                }
+            } catch (e) {}
+            onMessage(msg);
+        };
+
+        const winHandler = (e) => {
+            if (e.detail && e.detail.tripId === tripId) {
+                handleNewMessage(e.detail);
+            }
+        };
+        window.addEventListener('navigo:chat_message', winHandler);
+
+        const storageHandler = (e) => {
+            if (e.key === 'goride_chat_broadcast' && e.newValue) {
+                try {
+                    const data = JSON.parse(e.newValue);
+                    if (data && data.tripId === tripId) {
+                        handleNewMessage(data);
+                    }
+                } catch (err) {}
+            }
+        };
+        window.addEventListener('storage', storageHandler);
+
+        let fbRef = null;
+        if (this.isAvailable()) {
+            try {
+                fbRef = this.db.ref(`goride_trip_chats/${tripId}`);
+                fbRef.on('child_added', (snap) => {
+                    if (snap.key === '_meta') return;
+                    const val = snap.val();
+                    if (val && val.id) {
+                        handleNewMessage(val);
+                    }
+                });
+            } catch (e) {}
+        }
+
+        this._chatListeners.set(tripId, { winHandler, storageHandler, fbRef });
+    }
+
+    /**
+     * Hủy lắng nghe tin nhắn chat của cuốc xe
+     * @param {string} tripId
+     */
+    stopListeningTripChat(tripId) {
+        if (!tripId || !this._chatListeners || !this._chatListeners.has(tripId)) return;
+        const entry = this._chatListeners.get(tripId);
+        if (entry.winHandler) window.removeEventListener('navigo:chat_message', entry.winHandler);
+        if (entry.storageHandler) window.removeEventListener('storage', entry.storageHandler);
+        if (entry.fbRef) {
+            try { entry.fbRef.off(); } catch (e) {}
+        }
+        this._chatListeners.delete(tripId);
+    }
+
+    /**
+     * Đồng bộ đánh giá từ Firebase Cloud về LocalStorage
+     */
+    async syncRatingsFromCloud() {
+        try {
+            let cloudRatings = {};
+            if (this.isAvailable()) {
+                const snap = await this.db.ref('goride_ratings').once('value');
+                cloudRatings = snap.val() || {};
+            } else if (this.databaseURL && typeof this._restGet === 'function') {
+                cloudRatings = await this._restGet('goride_ratings') || {};
+            }
+            if (cloudRatings && typeof cloudRatings === 'object') {
+                const local = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
+                const seenIds = new Set(local.map(r => r.id));
+                let hasNew = false;
+                for (const r of Object.values(cloudRatings)) {
+                    if (r && r.id && !seenIds.has(r.id)) {
+                        seenIds.add(r.id);
+                        local.unshift(r);
+                        hasNew = true;
+                    }
+                }
+                if (hasNew) {
+                    local.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+                    localStorage.setItem('navigo_ratings_history', JSON.stringify(local));
+                }
+            }
+        } catch (e) {}
+    }
+
 /* ==========================================================================
        LOCAL STORAGE HELPERS (FALLBACK VÀ CHIA SẺ TRÌNH DUYỆT)
        ========================================================================== */

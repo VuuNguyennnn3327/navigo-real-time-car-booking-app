@@ -690,10 +690,11 @@ class DriverController {
   normalizeVehicleType(type) {
     if (!type) return 'car4';
     const s = String(type).toLowerCase().trim();
-    if (s === 'delivery' || s.includes('giao hàng') || s.includes('giao hang') || s.includes('delivery')) return 'delivery';
-    if (s === 'bike' || s === 'motorbike' || s.includes('bike') || s.includes('moto') || s.includes('xe máy') || s.includes('xe may')) return 'motorbike';
-    if (s === 'car7' || s === 'xl' || s.includes('7 chỗ') || s.includes('7 cho') || s.includes('xl')) return 'car7';
-    if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || s.includes('sang') || s.includes('luxury')) return 'premium';
+    const unacc = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (s === 'delivery' || unacc.includes('giao hang') || s.includes('delivery') || s.includes('box') || s.includes('shipper')) return 'delivery';
+    if (s === 'bike' || s === 'motorbike' || s === 'moto' || s === 'scooter' || unacc.includes('xe may') || s.includes('gobike') || s.includes('navigo bike') || s.includes('xanh sm bike') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
+    if (s === 'car7' || s === 'xl' || s === '7seats' || unacc.includes('7 cho') || s.includes('xl')) return 'car7';
+    if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || unacc.includes('xe sang') || s.includes('luxury')) return 'premium';
     return 'car4';
   }
 
@@ -705,14 +706,20 @@ class DriverController {
       } catch (e) {}
     }
     const savedDriverVType = localStorage.getItem('goride_driver_vehicle_type');
-    const rawType = savedDriverVType ||
-                    user?.vehicle?.type || 
-                    user?.vehicleType || 
-                    user?.vehicle_type || 
-                    (typeof user?.vehicle === 'string' ? user.vehicle : null) || 
-                    this.driverStats?.vehicleType || 
-                    'car4';
-    return this.normalizeVehicleType(rawType);
+    let rawType = savedDriverVType ||
+                  user?.vehicle?.type || 
+                  user?.vehicleType || 
+                  user?.vehicle_type || 
+                  (typeof user?.vehicle === 'string' ? user.vehicle : null) || 
+                  this.driverStats?.vehicleType;
+    if (!rawType) {
+      try {
+        const allDrivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
+        const curProfile = allDrivers.find(d => d.email === user?.email || d.phone === user?.phone || d.id === user?.id);
+        if (curProfile && curProfile.vehicleType) rawType = curProfile.vehicleType;
+      } catch (e) {}
+    }
+    return this.normalizeVehicleType(rawType || 'car4');
   }
 
   isMatchingVehicleType(tripVehicleType) {
@@ -759,8 +766,12 @@ class DriverController {
       return;
     }
 
-    const vInfo = this.getVehicleInfo(user?.vehicle?.type || user?.vehicleType);
-    const plate = user?.vehicle?.plate || user?.licensePlate || vInfo.defaultPlate;
+    // Prioritize active trip vehicle type if currently on a trip, otherwise driver vehicle profile
+    const activeTripVType = this.activeTrip?.vehicleType || this.activeTrip?.serviceType || this.activeTrip?.vehicleModel;
+    const resolvedType = activeTripVType ? this.normalizeVehicleType(activeTripVType) : this.getDriverVehicleType();
+    const vInfo = this.getVehicleInfo(resolvedType);
+    const plate = user?.vehicle?.plate || user?.licensePlate || this.activeTrip?.licensePlate || vInfo.defaultPlate;
+    const vehicleModel = this.activeTrip?.vehicleModel || user?.vehicle?.model || user?.vehicleModel || vInfo.defaultModel;
 
     if (typeof this.mapController.addDriverMarker === 'function') {
       this.mapController.addDriverMarker({
@@ -770,6 +781,8 @@ class DriverController {
         heading: this.currentPosition.heading || 0,
         name: user?.name || 'Tài xế của bạn',
         vehicleType: vInfo.type,
+        iconType: vInfo.type,
+        vehicleModel: vehicleModel,
         vehicle: `${vInfo.icon} ${vInfo.label} - ${plate}`,
         status: 'online',
         isActive: true
@@ -952,41 +965,6 @@ class DriverController {
 
     // 3. Instant cross-tab sync when customer or admin places or cancels a ride, or changes online status
     window.addEventListener('storage', (e) => {
-      // Driver account lock / unlock signal from Admin
-      if (e.key === 'goride_user_lock_event') {
-        try {
-          const lockData = JSON.parse(e.newValue || '{}');
-          let curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-          if (!curUser) {
-            try { curUser = JSON.parse(localStorage.getItem('goride_user') || 'null'); } catch(e2) {}
-          }
-          const myId = curUser?.id || (curUser?.phone ? ('drv_' + curUser.phone) : null);
-          const isTargetDriver = curUser && (
-            lockData.userId === myId ||
-            lockData.userId === curUser.id ||
-            (curUser.email && lockData.email === curUser.email) ||
-            (curUser.phone && lockData.phone === curUser.phone)
-          );
-          if (isTargetDriver) {
-            if (lockData.status === 'locked') {
-              if (this.isOnline) {
-                this.setOnlineStatus(false, false);
-              }
-              if (typeof sessionManager !== 'undefined') {
-                sessionManager.updateUser({ status: 'locked' });
-              }
-              this.showLockedAccountNotice();
-            } else if (lockData.status === 'active') {
-              if (typeof sessionManager !== 'undefined') {
-                sessionManager.updateUser({ status: 'active' });
-              }
-              this.removeLockedAccountNotice();
-              this.showToast('Tài khoản đối tác của bạn đã được mở khóa!', 'success', 5000);
-            }
-          }
-        } catch (err) {}
-      }
-
       // Sync driver online state toggled from profile.html
       if (e.key === 'goride_driver_online_state') {
         const newOnline = (e.newValue === '1');
@@ -1086,79 +1064,7 @@ class DriverController {
       this.loadDriverProfileAndStats();
     });
 
-    // Check if account is locked on startup
-    const initUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-    if (this.isAccountLocked(initUser)) {
-      this.showLockedAccountNotice();
-    }
-  }
-
-  isAccountLocked(user) {
-    if (!user) {
-      try {
-        user = JSON.parse(localStorage.getItem('goride_user') || 'null');
-      } catch (e) {}
-    }
-    if (!user) return false;
-    if (user.status === 'locked') return true;
-    try {
-      const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
-      const matched = offlineUsers.find(u => u.id === user.id || (user.email && u.email === user.email) || (user.phone && u.phone === user.phone));
-      if (matched && matched.status === 'locked') return true;
-    } catch (e) {}
-    try {
-      const adminDrivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
-      const dMatch = adminDrivers.find(d => d.id === user.id || (user.email && d.email === user.email) || (user.phone && d.phone === user.phone));
-      if (dMatch && dMatch.status === 'locked') return true;
-    } catch (e) {}
-    return false;
-  }
-
-  showLockedAccountNotice() {
-    this.isOnline = false;
-    localStorage.setItem('goride_driver_online_state', '0');
-    this.renderOnlineStatusUI();
-
-    const toggleCheckbox = document.getElementById('online-toggle');
-    if (toggleCheckbox) {
-      toggleCheckbox.checked = false;
-      toggleCheckbox.disabled = true;
-    }
-
-    let banner = document.getElementById('driver-locked-banner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'driver-locked-banner';
-      banner.style.cssText = 'position:fixed; top:16px; left:16px; right:16px; z-index:9999999; background:#fef2f2; border:1.5px solid #ef4444; color:#991b1b; padding:14px 20px; border-radius:14px; box-shadow:0 10px 30px rgba(239,68,68,0.3); display:flex; align-items:center; gap:14px; font-family:system-ui,-apple-system,sans-serif;';
-      banner.innerHTML = `
-        <span style="font-size:26px; line-height:1;">🚨</span>
-        <div style="flex:1;">
-          <div style="color:#b91c1c; font-size:14px; font-weight:800; letter-spacing:-0.2px;">TÀI KHOẢN ĐÃ BỊ TẠM KHÓA BỞI QUẢN TRỊ VIÊN</div>
-          <div style="font-size:12px; font-weight:500; color:#7f1d1d; margin-top:3px; line-height:1.4;">Tài khoản đối tác của bạn đã bị khóa. Bạn không thể bật trực tuyến hoặc nhận các chuyến xe mới. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.</div>
-        </div>
-      `;
-      document.body.appendChild(banner);
-    }
-
-    if (typeof window.showNavigoModal === 'function') {
-      window.showNavigoModal({
-        title: '🚨 Tài khoản bị tạm khóa',
-        message: 'Tài khoản của bạn đã bị Quản trị viên tạm khóa. Bạn tạm thời không thể bật trực tuyến hoặc nhận các chuyến xe mới. Vui lòng liên hệ tổng đài hỗ trợ Navigo: 1900 8888 để biết thêm chi tiết.',
-        icon: '🚨',
-        confirmText: 'Đã hiểu',
-        showCancel: false,
-        danger: true
-      });
-    }
-  }
-
-  removeLockedAccountNotice() {
-    const banner = document.getElementById('driver-locked-banner');
-    if (banner) banner.remove();
-    const toggleCheckbox = document.getElementById('online-toggle');
-    if (toggleCheckbox) {
-      toggleCheckbox.disabled = false;
-    }
+    // Trạng thái trực tuyến được duy trì an toàn khi chuyển trang và chỉ tắt khi tài xế chủ động gạt nút hoặc đăng xuất.
   }
 
   async setOnlineStatus(isOnline, showNotification = true) {
@@ -1179,15 +1085,6 @@ class DriverController {
       } else {
         window.location.href = 'login.html?redirect=driver.html&role=driver';
       }
-      return;
-    }
-
-    // Strict Guard: Check if driver account has been locked by Administrator
-    if (this.isAccountLocked(user)) {
-      this.isOnline = false;
-      localStorage.setItem('goride_driver_online_state', '0');
-      this.renderOnlineStatusUI();
-      this.showLockedAccountNotice();
       return;
     }
 
@@ -1307,11 +1204,12 @@ class DriverController {
       if (!driverId && !this.isOnline) return;
       const driverName = user?.name || 'Tài xế';
       const driverPhone = user?.phone || '';
-      const vehicleType = this.getDriverVehicleType();
+      const activeTripVType = this.activeTrip?.vehicleType || this.activeTrip?.serviceType || this.activeTrip?.vehicleModel;
+      const vehicleType = activeTripVType ? this.normalizeVehicleType(activeTripVType) : this.getDriverVehicleType();
       const vInfo = this.getVehicleInfo(vehicleType);
       const vehicleTypeName = vInfo.label;
-      const plate = user?.vehicle?.plate || user?.licensePlate || vInfo.defaultPlate;
-      const model = user?.vehicle?.model || user?.vehicleModel || vInfo.defaultModel;
+      const plate = user?.vehicle?.plate || user?.licensePlate || this.activeTrip?.licensePlate || vInfo.defaultPlate;
+      const model = this.activeTrip?.vehicleModel || user?.vehicle?.model || user?.vehicleModel || vInfo.defaultModel;
 
       let onlineDrivers = {};
       try {
@@ -1995,15 +1893,6 @@ class DriverController {
   }
 
   async handleAcceptRequest(requestId) {
-    let curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-    if (this.isAccountLocked(curUser)) {
-      this.renderIncomingOfferDialog(null);
-      this.currentOffer = null;
-      this.incomingRequests = [];
-      this.showLockedAccountNotice();
-      return;
-    }
-
     const req = this.currentOffer || this.incomingRequests.find(r => String(r.id) === String(requestId));
     if (!req) return;
 
@@ -2072,11 +1961,13 @@ class DriverController {
         } catch (e) {}
       }
 
-      let vehicleType = this.getDriverVehicleType();
+      // Prioritize trip's requested vehicle class from customer
+      const reqTripVType = req.vehicleType || req.serviceType || req.service || req.vehicleModel;
+      let vehicleType = reqTripVType ? this.normalizeVehicleType(reqTripVType) : this.getDriverVehicleType();
       const vInfo = this.getVehicleInfo(vehicleType);
       let isBike = (vehicleType === 'bike' || vehicleType === 'motorbike');
       let driverPlate = user?.vehicle?.plate || user?.licensePlate || vInfo.defaultPlate;
-      let driverVehicle = user?.vehicle?.model || vInfo.name;
+      let driverVehicle = (reqTripVType && req.vehicleModel) ? req.vehicleModel : (user?.vehicle?.model || vInfo.name);
       let driverName = user?.name || 'Tài xế đối tác';
       let driverRating = '5.0';
       let driverPhone = (user && user.role === 'driver' && user.phone) ? user.phone : (user?.id || '');
@@ -2087,12 +1978,14 @@ class DriverController {
         if (curProfile) {
           driverName = curProfile.name || driverName;
           driverPlate = curProfile.plate || curProfile.licensePlate || driverPlate || vInfo.defaultPlate;
-          driverVehicle = curProfile.model || curProfile.vehicleModel || driverVehicle || vInfo.name;
-          if (curProfile.phone) driverPhone = curProfile.phone;
-          if (curProfile.vehicleType) {
-            vehicleType = curProfile.vehicleType;
-            isBike = (vehicleType === 'bike' || vehicleType === 'motorbike');
+          if (!reqTripVType) {
+            driverVehicle = curProfile.model || curProfile.vehicleModel || driverVehicle || vInfo.name;
+            if (curProfile.vehicleType) {
+              vehicleType = curProfile.vehicleType;
+              isBike = (vehicleType === 'bike' || vehicleType === 'motorbike');
+            }
           }
+          if (curProfile.phone) driverPhone = curProfile.phone;
         }
       } catch (e) {}
 
@@ -2347,6 +2240,16 @@ class DriverController {
           </div>
         </div>
 
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
+          <a href="tel:${custPhone}" style="display:flex; align-items:center; justify-content:center; gap:6px; height:42px; background:#eff6ff; color:#0288d1; text-decoration:none; border-radius:10px; font-weight:700; font-size:0.85rem; border:1px solid #bfdbfe;">
+            📞 Gọi khách
+          </a>
+          <button type="button" id="btn-driver-chat" onclick="driverController.openChatModal()" style="position:relative; display:flex; align-items:center; justify-content:center; gap:6px; height:42px; background:#f0fdf4; color:#047857; border-radius:10px; font-weight:700; font-size:0.85rem; border:1px solid #a7f3d0; cursor:pointer;">
+            💬 Nhắn tin
+            <span class="driver-chat-badge" style="display:${(this.unreadChatCount > 0) ? 'inline-block' : 'none'}; position:absolute; top:-6px; right:-6px; background:#ef4444; color:#fff; font-size:0.7rem; font-weight:800; border-radius:9999px; padding:1px 6px; box-shadow:0 2px 4px rgba(0,0,0,0.2);">${this.unreadChatCount || 0}</span>
+          </button>
+        </div>
+
         <button type="button" class="btn btn-success btn-block" id="btn-complete-trip" onclick="driverController.confirmCompletedTrip()" style="width:100%; padding:13px; font-size:1rem; font-weight:800; border-radius:12px; background:linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow:0 4px 14px rgba(16,185,129,0.4); border:none; color:#fff; cursor:pointer;">
           🏁 Đã đến điểm đến — Hoàn thành chuyến đi (${fareFormatted})
         </button>
@@ -2374,12 +2277,16 @@ class DriverController {
           </div>
         </div>
 
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
-          <a href="tel:${custPhone}" style="display:flex; align-items:center; justify-content:center; gap:5px; height:42px; background:#eff6ff; color:#1d4ed8; text-decoration:none; border-radius:10px; font-weight:700; font-size:0.85rem; border:1px solid #bfdbfe;">
-            📞 Gọi nhắc khách
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:6px; margin-bottom:10px;">
+          <a href="tel:${custPhone}" style="display:flex; align-items:center; justify-content:center; gap:4px; height:42px; background:#eff6ff; color:#1d4ed8; text-decoration:none; border-radius:10px; font-weight:700; font-size:0.82rem; border:1px solid #bfdbfe;">
+            📞 Gọi khách
           </a>
-          <button type="button" onclick="driverController.remindCustomer()" style="display:flex; align-items:center; justify-content:center; gap:5px; height:42px; background:#fef3c7; color:#b45309; border-radius:10px; font-weight:700; font-size:0.85rem; border:1px solid #fde68a; cursor:pointer;">
-            🔔 Rung chuông nhắc
+          <button type="button" onclick="driverController.remindCustomer()" style="display:flex; align-items:center; justify-content:center; gap:4px; height:42px; background:#fef3c7; color:#b45309; border-radius:10px; font-weight:700; font-size:0.82rem; border:1px solid #fde68a; cursor:pointer;">
+            🔔 Rung chuông
+          </button>
+          <button type="button" id="btn-driver-chat" onclick="driverController.openChatModal()" style="position:relative; display:flex; align-items:center; justify-content:center; gap:4px; height:42px; background:#f0fdf4; color:#047857; border-radius:10px; font-weight:700; font-size:0.82rem; border:1px solid #a7f3d0; cursor:pointer;">
+            💬 Nhắn tin
+            <span class="driver-chat-badge" style="display:${(this.unreadChatCount > 0) ? 'inline-block' : 'none'}; position:absolute; top:-6px; right:-6px; background:#ef4444; color:#fff; font-size:0.7rem; font-weight:800; border-radius:9999px; padding:1px 6px; box-shadow:0 2px 4px rgba(0,0,0,0.2);">${this.unreadChatCount || 0}</span>
           </button>
         </div>
 
@@ -2414,15 +2321,23 @@ class DriverController {
           </div>
         </div>
 
-        <div style="display:grid; grid-template-columns: 120px 1fr; gap:8px; margin-bottom:4px;">
-          <a href="tel:${custPhone}" style="display:flex; align-items:center; justify-content:center; gap:6px; height:46px; background:#eff6ff; color:#0288d1; text-decoration:none; border-radius:12px; font-weight:700; font-size:0.88rem; border:1.5px solid #bfdbfe;">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:8px;">
+          <a href="tel:${custPhone}" style="display:flex; align-items:center; justify-content:center; gap:6px; height:42px; background:#eff6ff; color:#0288d1; text-decoration:none; border-radius:12px; font-weight:700; font-size:0.85rem; border:1.5px solid #bfdbfe;">
             📞 Gọi khách
           </a>
-          <button type="button" class="btn btn-primary" id="btn-confirm-arrived" onclick="driverController.confirmArrived()" style="height:46px; font-size:0.92rem; font-weight:800; border-radius:12px; background:linear-gradient(135deg, #0288d1 0%, #0369a1 100%); box-shadow:0 4px 14px rgba(2,136,209,0.35); border:none; color:#fff; cursor:pointer;">
-            📍 Tôi đã đến điểm đón
+          <button type="button" id="btn-driver-chat" onclick="driverController.openChatModal()" style="position:relative; display:flex; align-items:center; justify-content:center; gap:6px; height:42px; background:#f0fdf4; color:#047857; border-radius:12px; font-weight:700; font-size:0.85rem; border:1.5px solid #a7f3d0; cursor:pointer;">
+            💬 Nhắn tin
+            <span class="driver-chat-badge" style="display:${(this.unreadChatCount > 0) ? 'inline-block' : 'none'}; position:absolute; top:-6px; right:-6px; background:#ef4444; color:#fff; font-size:0.7rem; font-weight:800; border-radius:9999px; padding:1px 6px; box-shadow:0 2px 4px rgba(0,0,0,0.2);">${this.unreadChatCount || 0}</span>
           </button>
         </div>
+        <button type="button" class="btn btn-primary" id="btn-confirm-arrived" onclick="driverController.confirmArrived()" style="width:100%; height:46px; font-size:0.92rem; font-weight:800; border-radius:12px; background:linear-gradient(135deg, #0288d1 0%, #0369a1 100%); box-shadow:0 4px 14px rgba(2,136,209,0.35); border:none; color:#fff; cursor:pointer;">
+          📍 Tôi đã đến điểm đón
+        </button>
       `;
+    }
+
+    if (this.activeTrip && this.activeTrip.id) {
+      this.setupTripChatListener(this.activeTrip.id);
     }
 
     card.style.display = 'block';
@@ -2913,15 +2828,6 @@ class DriverController {
       { id: 'pvd_ql13', lat: 10.82400, lng: 106.71200 },    // Phạm Văn Đồng x Quốc Lộ 13
       { id: 'ql13_hiepbinh', lat: 10.83500, lng: 106.71500 }, // QL13 x Hiệp Bình
       { id: 'ql13_binhphuoc', lat: 10.85000, lng: 106.72000 }, // Ngã Tư Bình Phước (QL13 x QL1A)
-      // District 9 & Tang Nhon Phu & Thu Duc
-      { id: 'tnp_duong_a', lat: 10.84380, lng: 106.78250 },     // 43/8 Đường A, Tăng Nhơn Phú
-      { id: 'tnp_vietinbank', lat: 10.84650, lng: 106.77900 },  // VietinBank Tăng Nhơn Phú (Lê Văn Việt)
-      { id: 'tnp_levanviet', lat: 10.84600, lng: 106.77850 },   // Lê Văn Việt x Man Thiện
-      { id: 'tnp_laxuanoai', lat: 10.84100, lng: 106.79000 },   // Hẻm 32 Lã Xuân Oai, Tăng Nhơn Phú
-      { id: 'tnp_hocvien', lat: 10.84450, lng: 106.78600 },     // Học viện Chính trị
-      { id: 'tnp_manthien', lat: 10.85050, lng: 106.78500 },    // Man Thiện
-      { id: 'thuduc_ufm', lat: 10.84900, lng: 106.78150 },      // ĐH Tài chính - Marketing (UFM)
-      { id: 'thuduc_ute', lat: 10.85080, lng: 106.77190 },      // ĐH Sư phạm Kỹ thuật (UTE)
       // District 12 & An Phu Dong
       { id: 'truong_chinh_an_suong', lat: 10.84500, lng: 106.61800 }, // Ngã Tư An Sương
       { id: 'ql1a_tth', lat: 10.85500, lng: 106.64500 },    // QL1A x Tân Thới Hiệp
@@ -2961,15 +2867,7 @@ class DriverController {
       cau_binh_trieu: ['pvd_ql13', 'tdt_nhc'],
       ql13_hiepbinh: ['pvd_ql13', 'ql13_binhphuoc'],
       ql13_binhphuoc: ['ql13_hiepbinh', 'an_phu_dong_d3', 'xlhn_thuduc'],
-      xlhn_thuduc: ['ql13_binhphuoc', 'cau_sg', 'thuduc_ute', 'thuduc_ufm'],
-      thuduc_ute: ['xlhn_thuduc', 'tnp_levanviet'],
-      thuduc_ufm: ['xlhn_thuduc', 'tnp_manthien', 'tnp_vietinbank'],
-      tnp_levanviet: ['thuduc_ute', 'tnp_vietinbank', 'tnp_manthien'],
-      tnp_vietinbank: ['tnp_levanviet', 'thuduc_ufm', 'tnp_duong_a'],
-      tnp_duong_a: ['tnp_vietinbank', 'tnp_hocvien'],
-      tnp_hocvien: ['tnp_duong_a', 'tnp_laxuanoai'],
-      tnp_laxuanoai: ['tnp_hocvien', 'tnp_manthien'],
-      tnp_manthien: ['tnp_levanviet', 'thuduc_ufm', 'tnp_laxuanoai'],
+      xlhn_thuduc: ['ql13_binhphuoc', 'cau_sg'],
       cau_sg: ['xlhn_thuduc', 'lm81'],
       nd_pas: ['nd_dk', 'nd_nkk'],
       nd_dk: ['ly_dk', 'ly_hbt', 'nd_pas'],
@@ -3012,20 +2910,6 @@ class DriverController {
 
     const startRes = findNearestNode(fLat, fLng);
     const endRes = findNearestNode(tLat, tLng);
-    const directDist = calcDist(fLat, fLng, tLat, tLng);
-
-    // Sanity Check: For short direct trips (< 1.2km) or if snapping to nodes creates an unnatural detour (> directDist)
-    // generate a clean direct street corridor directly between pickup and destination
-    if (directDist < 1200 || (startRes.dist > directDist * 0.7 && endRes.dist > directDist * 0.7)) {
-      const dLat_diff = tLat - fLat;
-      const dLng_diff = tLng - fLng;
-      return [
-        [fLat, fLng],
-        [Number((fLat + dLat_diff * 0.33 + dLat_diff * 0.03).toFixed(6)), Number((fLng + dLng_diff * 0.33 - dLng_diff * 0.02).toFixed(6))],
-        [Number((fLat + dLat_diff * 0.67 - dLat_diff * 0.02).toFixed(6)), Number((fLng + dLng_diff * 0.67 + dLng_diff * 0.03).toFixed(6))],
-        [tLat, tLng]
-      ];
-    }
 
     // If both nodes are identified, find authentic street route via BFS
     if (startRes.node.id !== endRes.node.id) {
@@ -3406,8 +3290,8 @@ class DriverController {
           driverName: trip.driverName,
           driverPhone: trip.driverPhone || (user?.phone || user?.id || ''),
           licensePlate: trip.licensePlate,
-          vehicleModel: trip.vehicleModel,
-          vehicleType: trip.vehicleType,
+          vehicleModel: trip.vehicleModel || '',
+          vehicleType: trip.vehicleType || this.normalizeVehicleType(trip.vehicleModel || 'car4'),
           driverLat: this.currentPosition.lat,
           driverLon: this.currentPosition.lng,
           paymentMethod: trip.paymentMethod || (trip.paidByWallet ? 'wallet' : 'cash'),
@@ -3815,7 +3699,8 @@ class DriverController {
             customerName: customerName,
             customerPhone: customerPhone,
             driverId: curUser?.id || '',
-            driverName: curUser?.name || 'Tài xế đối tác'
+            driverName: curUser?.name || 'Tài xế đối tác',
+            driverPhone: curUser?.phone || ''
           });
         }
 
@@ -3834,6 +3719,230 @@ class DriverController {
         }
       };
     }
+  }
+
+  /* ==========================================================================
+     DRIVER IN-TRIP CHAT ENGINE (INTERACTIVE REAL-TIME MESSAGING)
+     ========================================================================== */
+
+  setupTripChatListener(tripId) {
+    if (!tripId || typeof realtimeSync === 'undefined' || !realtimeSync.listenTripChat) return;
+    realtimeSync.listenTripChat(tripId, (msg) => {
+      if (msg && msg.senderRole === 'customer') {
+        if (this.isChatOpen) {
+          const feed = document.getElementById('driver-chat-feed');
+          if (feed) {
+            const empty = document.getElementById('driver-chat-empty');
+            if (empty) empty.remove();
+            const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+            const msgDiv = document.createElement('div');
+            msgDiv.style.cssText = 'display:flex; flex-direction:column; align-items:flex-start; margin-bottom:8px;';
+            msgDiv.innerHTML = `
+              <div style="font-size:0.68rem; color:#94a3b8; margin-bottom:2px; padding:0 4px;">${this.escapeHtml(msg.senderName || 'Khách hàng')} • ${timeStr}</div>
+              <div style="background:#ffffff; color:#0f172a; border:1px solid #e2e8f0; border-radius:14px 14px 14px 2px; box-shadow:0 1px 3px rgba(0,0,0,0.05); padding:9px 13px; max-width:82%; font-size:0.88rem; line-height:1.4; word-break:break-word;">
+                ${this.escapeHtml(msg.text)}
+              </div>
+            `;
+            feed.appendChild(msgDiv);
+            feed.scrollTop = feed.scrollHeight;
+          }
+        } else {
+          this.unreadChatCount = (this.unreadChatCount || 0) + 1;
+          this.updateChatBadge();
+          this.showToast(`💬 Khách hàng ${msg.senderName || ''}: ${msg.text}`, 'info', 4500);
+          if (typeof navigoNotifications !== 'undefined') {
+            navigoNotifications.addNotification({
+              id: 'chat_' + msg.id,
+              category: 'trips',
+              title: `TIN NHẮN TỪ KHÁCH HÀNG: ${msg.senderName || ''}`,
+              body: msg.text,
+              icon: '💬',
+              actionUrl: 'driver.html',
+              actionText: 'Mở khung chat'
+            });
+          }
+        }
+      }
+    });
+  }
+
+  updateChatBadge() {
+    document.querySelectorAll('.driver-chat-badge').forEach(badge => {
+      if (this.unreadChatCount && this.unreadChatCount > 0) {
+        badge.textContent = this.unreadChatCount;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
+      }
+    });
+  }
+
+  openChatModal() {
+    if (!this.activeTrip) {
+      this.showToast('Hiện không có chuyến đi nào đang hoạt động.', 'warning');
+      return;
+    }
+    const trip = this.activeTrip;
+    const tripId = trip.id;
+    const cName = trip.customerName || 'Khách hàng';
+    const cPhone = trip.customerPhone || trip.phone || '';
+
+    this.isChatOpen = true;
+    this.unreadChatCount = 0;
+    this.updateChatBadge();
+
+    const messages = (typeof realtimeSync !== 'undefined' && realtimeSync.getTripChatMessages)
+      ? realtimeSync.getTripChatMessages(tripId)
+      : [];
+
+    const modalId = 'modal-driver-chat';
+    let modal = document.getElementById(modalId);
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = modalId;
+      modal.className = 'incoming-offer-overlay';
+      modal.style.cssText = 'display:flex; z-index:2147483647 !important; padding:16px; background:rgba(0,0,0,0.6); align-items:center; justify-content:center; position:fixed; inset:0;';
+      document.body.appendChild(modal);
+    }
+
+    const renderMsgsHtml = (msgs) => {
+      if (!msgs || msgs.length === 0) {
+        return `
+          <div id="driver-chat-empty" style="text-align:center; padding:32px 12px; color:#94a3b8; font-size:0.85rem;">
+            <div style="font-size:2rem; margin-bottom:6px;">💬</div>
+            <div style="font-weight:700; color:#64748b;">Chưa có tin nhắn nào.</div>
+            <div style="font-size:0.75rem; margin-top:2px;">Hãy gửi tin nhắn để thông báo cho hành khách biết tình trạng xe!</div>
+          </div>
+        `;
+      }
+      return msgs.map(m => {
+        const isMe = (m.senderRole === 'driver');
+        const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+        return `
+          <div style="display:flex; flex-direction:column; align-items:${isMe ? 'flex-end' : 'flex-start'}; margin-bottom:8px;">
+            <div style="font-size:0.68rem; color:#94a3b8; margin-bottom:2px; padding:0 4px;">
+              ${isMe ? 'Bạn' : this.escapeHtml(m.senderName || cName)} • ${timeStr}
+            </div>
+            <div style="${isMe 
+              ? 'background:linear-gradient(135deg, #0288d1, #00b1a9); color:#fff; border-radius:14px 14px 2px 14px;' 
+              : 'background:#ffffff; color:#0f172a; border:1px solid #e2e8f0; border-radius:14px 14px 14px 2px; box-shadow:0 1px 3px rgba(0,0,0,0.05);'} 
+              padding:9px 13px; max-width:82%; font-size:0.88rem; line-height:1.4; word-break:break-word;">
+              ${this.escapeHtml(m.text)}
+            </div>
+          </div>
+        `;
+      }).join('');
+    };
+
+    modal.innerHTML = `
+      <div style="background:#ffffff; border-radius:20px; width:100%; max-width:440px; max-height:85vh; display:flex; flex-direction:column; padding:18px; box-shadow:0 20px 40px rgba(0,0,0,0.25); position:relative;">
+        <!-- Header -->
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e2e8f0; padding-bottom:12px; margin-bottom:10px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:40px; height:40px; border-radius:50%; background:linear-gradient(135deg, #0288d1, #00b1a9); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:1.1rem;">
+              👤
+            </div>
+            <div>
+              <div style="font-weight:800; color:#0f172a; font-size:1.02rem; display:flex; align-items:center; gap:6px;">
+                ${this.escapeHtml(cName)}
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981;" title="Trực tuyến"></span>
+              </div>
+              <div style="font-size:0.75rem; color:#64748b;">${cPhone ? 'SĐT: ' + this.escapeHtml(cPhone) + ' • ' : ''}Chuyến #${tripId}</div>
+            </div>
+          </div>
+          <button type="button" id="btn-close-driver-chat" style="background:#f1f5f9; border:none; width:32px; height:32px; border-radius:50%; font-size:1.3rem; cursor:pointer; color:#64748b; display:flex; align-items:center; justify-content:center;">&times;</button>
+        </div>
+
+        <!-- Feed -->
+        <div id="driver-chat-feed" style="flex:1; max-height:260px; min-height:180px; overflow-y:auto; padding:8px 4px; display:flex; flex-direction:column; margin-bottom:10px; scroll-behavior:smooth;">
+          ${renderMsgsHtml(messages)}
+        </div>
+
+        <!-- Quick chips -->
+        <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:8px; margin-bottom:8px; -webkit-overflow-scrolling:touch;">
+          <button type="button" class="btn-driver-chat-chip" data-msg="Tôi đang trên đường đến rồi nhé" style="white-space:nowrap; background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Tôi đang trên đường đến</button>
+          <button type="button" class="btn-driver-chat-chip" data-msg="Tôi đã đến điểm đón rồi nhé" style="white-space:nowrap; background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Tôi đã đến điểm đón</button>
+          <button type="button" class="btn-driver-chat-chip" data-msg="Đường hơi đông, bạn chờ tôi khoảng 2-3 phút nhé" style="white-space:nowrap; background:#fef3c7; border:1px solid #fde68a; color:#b45309; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Chờ tôi 2-3 phút nhé</button>
+          <button type="button" class="btn-driver-chat-chip" data-msg="Tôi đang bật xi nhan đỗ gần cổng" style="white-space:nowrap; background:#f5f3ff; border:1px solid #ddd6fe; color:#6d28d9; border-radius:9999px; padding:4px 10px; font-size:0.75rem; font-weight:600; cursor:pointer;">Đang đỗ gần cổng</button>
+        </div>
+
+        <!-- Form -->
+        <form id="driver-chat-form" style="display:flex; gap:8px; margin:0;" onsubmit="return false;">
+          <input type="text" id="driver-chat-input" placeholder="Nhập tin nhắn cho khách..." class="form-input" style="flex:1; height:42px; font-size:0.88rem; border-radius:12px; padding:0 14px; border:1px solid #cbd5e1;" autocomplete="off" autofocus>
+          <button type="submit" id="btn-driver-send-chat" style="height:42px; padding:0 18px; border-radius:12px; background:linear-gradient(135deg, #0288d1, #00b1a9); color:#fff; border:none; font-weight:700; font-size:0.88rem; cursor:pointer; display:flex; align-items:center; gap:4px; box-shadow:0 3px 10px rgba(2,136,209,0.3);">
+            <span>Gửi</span> ➤
+          </button>
+        </form>
+      </div>
+    `;
+
+    modal.style.display = 'flex';
+    const feed = modal.querySelector('#driver-chat-feed');
+    if (feed) feed.scrollTop = feed.scrollHeight;
+
+    const closeBtn = modal.querySelector('#btn-close-driver-chat');
+    if (closeBtn) {
+      closeBtn.onclick = () => {
+        this.isChatOpen = false;
+        modal.style.display = 'none';
+      };
+    }
+
+    const inputEl = modal.querySelector('#driver-chat-input');
+    const formEl = modal.querySelector('#driver-chat-form');
+
+    const doSend = async (textToSend) => {
+      const txt = (textToSend || inputEl?.value || '').trim();
+      if (!txt) return;
+      if (inputEl) inputEl.value = '';
+
+      let curUser = null;
+      if (typeof sessionManager !== 'undefined') {
+        curUser = sessionManager.getUser?.() || sessionManager.getCurrentUser?.();
+      }
+      const dName = curUser?.name || 'Tài xế';
+      const dId = curUser?.id || '';
+
+      if (typeof realtimeSync !== 'undefined' && realtimeSync.sendChatMessage) {
+        await realtimeSync.sendChatMessage(tripId, {
+          text: txt,
+          senderRole: 'driver',
+          senderName: dName,
+          senderId: dId
+        });
+      }
+
+      if (feed) {
+        const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+        const empty = modal.querySelector('#driver-chat-empty');
+        if (empty) empty.remove();
+
+        const msgDiv = document.createElement('div');
+        msgDiv.style.cssText = 'display:flex; flex-direction:column; align-items:flex-end; margin-bottom:8px;';
+        msgDiv.innerHTML = `
+          <div style="font-size:0.68rem; color:#94a3b8; margin-bottom:2px; padding:0 4px;">Bạn • ${timeStr}</div>
+          <div style="background:linear-gradient(135deg, #0288d1, #00b1a9); color:#fff; border-radius:14px 14px 2px 14px; padding:9px 13px; max-width:82%; font-size:0.88rem; line-height:1.4; word-break:break-word;">
+            ${this.escapeHtml(txt)}
+          </div>
+        `;
+        feed.appendChild(msgDiv);
+        feed.scrollTop = feed.scrollHeight;
+      }
+    };
+
+    if (formEl) {
+      formEl.onsubmit = (e) => {
+        e.preventDefault();
+        doSend();
+      };
+    }
+
+    modal.querySelectorAll('.btn-driver-chat-chip').forEach(chip => {
+      chip.onclick = () => {
+        const msg = chip.getAttribute('data-msg');
+        if (msg) doSend(msg);
+      };
+    });
   }
 
   /* ==========================================================================
@@ -4308,6 +4417,9 @@ class DriverController {
 
 // Global initialization
 let driverController;
+if (typeof window !== 'undefined') {
+  window.DriverController = DriverController;
+}
 document.addEventListener('DOMContentLoaded', () => {
   driverController = new DriverController();
   driverController.init();

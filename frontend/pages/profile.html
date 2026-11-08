@@ -97,6 +97,41 @@
             margin-left: 6px;
         }
 
+        .gsm-avatar-wrapper {
+            position: relative;
+            width: 62px;
+            height: 62px;
+            flex-shrink: 0;
+            cursor: pointer;
+            border-radius: 50%;
+            transition: transform 0.18s ease;
+        }
+        .gsm-avatar-wrapper:hover {
+            transform: scale(1.05);
+        }
+        .gsm-avatar-wrapper:hover .gsm-avatar-cam-badge {
+            background: #00b1a9;
+            transform: scale(1.1);
+        }
+        .gsm-avatar-cam-badge {
+            position: absolute;
+            bottom: -2px;
+            right: -2px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #0f2d3c;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.72rem;
+            border: 2px solid #ffffff;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+            transition: all 0.18s ease;
+            cursor: pointer;
+        }
+
         @keyframes gsmPulse {
             0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
             70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
@@ -212,7 +247,12 @@
         <!-- 1. User Header Row with Account Role Identification (Admin / Driver / Customer) -->
         <div class="gsm-profile-user-card" style="padding-top:8px; display:flex; align-items:center; justify-content:space-between; gap:12px; position:relative;">
             <div style="display:flex; align-items:center; gap:14px; flex:1; min-width:0;">
-                <div class="gsm-profile-avatar-circle" id="profile-avatar-initials" style="flex-shrink:0;">U</div>
+                <div class="gsm-avatar-wrapper" id="profile-avatar-wrapper" onclick="window.triggerAvatarDevicePicker(event)" style="cursor:pointer;" title="Chạm để thay đổi ảnh đại diện từ thiết bị">
+                    <div class="gsm-profile-avatar-circle" id="profile-avatar-initials" style="overflow:hidden; width:100%; height:100%; display:flex; align-items:center; justify-content:center; cursor:pointer;">U</div>
+                    <div class="gsm-avatar-cam-badge" style="cursor:pointer;" title="Đổi ảnh đại diện">📷</div>
+                </div>
+                <!-- Native device file picker input (placed outside wrapper to prevent bubbling loops) -->
+                <input type="file" id="input-avatar-device" accept="image/*" style="display:none;" />
                 <div style="flex:1; min-width:0;">
                     <div class="gsm-profile-user-name" style="display:flex; align-items:center; gap:6px;">
                         <span id="profile-display-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Người dùng Navigo</span>
@@ -221,6 +261,11 @@
                     <div class="gsm-profile-user-phone" style="display:flex; align-items:center; gap:6px;">
                         <span id="profile-display-phone">0900 000 000</span>
                         <span class="gsm-edit-icon-badge" id="btn-edit-user-phone" title="Chỉnh sửa số điện thoại" style="cursor:pointer; flex-shrink:0; font-size:0.7rem;">✎</span>
+                    </div>
+                    <!-- Star Rating Badge of Current Account -->
+                    <div id="profile-header-rating-badge" style="display:inline-flex; align-items:center; gap:6px; margin-top:4px;">
+                        <span style="color:#f59e0b; font-weight:800; font-size:0.8rem;">★ 5.0</span>
+                        <span style="color:#64748b; font-weight:600; font-size:0.75rem;">(Chưa có đánh giá)</span>
                     </div>
                 </div>
             </div>
@@ -350,21 +395,11 @@
             Đăng xuất
         </button>
 
-        <!-- 10. Ministry of Industry and Trade Badges -->
-        <div class="gsm-bct-badges-row">
-            <div class="gsm-bct-badge blue">
-                <span>✓</span>
-                <span>ĐÃ THÔNG BÁO BỘ CÔNG THƯƠNG</span>
-            </div>
-            <div class="gsm-bct-badge red">
-                <span>★</span>
-                <span>ĐÃ ĐĂNG KÝ BỘ CÔNG THƯƠNG</span>
-            </div>
-        </div>
+        
 
         <!-- 11. Version text -->
         <div class="gsm-app-version-text" style="margin-bottom:10px;">
-            Phiên bản v5.12.0 (437) — Navigo Platform 100% Thuần Điện
+            Phiên bản v5.12.0 (437) — Navigo Platform
         </div>
     </div>
 
@@ -441,6 +476,20 @@
 
     <!-- Dedicated Profile Controller: Account Role Badges & Driver Active Toggle -->
     <script>
+        // =========================================================================
+        // KÍCH HOẠT CHỌN ẢNH ĐẠI DIỆN TỪ THIẾT BỊ (NATIVE FILE CHOOSER)
+        // =========================================================================
+        window.triggerAvatarDevicePicker = function(e) {
+            if (e) {
+                e.stopPropagation();
+            }
+            const fileInput = document.getElementById('input-avatar-device');
+            if (fileInput) {
+                fileInput.value = '';
+                fileInput.click();
+            }
+        };
+
         // 1. Render Account Identification Badge & User Profile
         function renderProfileAccountBadge() {
             const badgeSlot = document.getElementById('profile-account-badge-slot');
@@ -482,7 +531,21 @@
             const phoneEl = document.getElementById('profile-display-phone');
             if (phoneEl && user.phone) phoneEl.textContent = user.phone;
             const avatarEl = document.getElementById('profile-avatar-initials');
-            if (avatarEl && user.name) avatarEl.textContent = (user.name.charAt(0) || 'U').toUpperCase();
+            if (avatarEl) {
+                if (user.avatar) {
+                    avatarEl.innerHTML = `<img src="${user.avatar}" alt="${user.name || 'User'}" style="width:100%; height:100%; object-fit:cover; border-radius:50%; display:block;" />`;
+                } else {
+                    avatarEl.textContent = (user.name ? user.name.charAt(0) : 'U').toUpperCase();
+                }
+            }
+            const navAvatarEls = document.querySelectorAll('[data-user-avatar]');
+            navAvatarEls.forEach(el => {
+                if (user.avatar) {
+                    el.innerHTML = `<img src="${user.avatar}" alt="${user.name || 'User'}" style="width:100%; height:100%; object-fit:cover; border-radius:50%; display:block;" />`;
+                } else {
+                    el.textContent = (user.name ? user.name.charAt(0) : 'U').toUpperCase();
+                }
+            });
 
             const role = (user.role || 'customer').toLowerCase();
             const driverRowLabel = document.getElementById('profile-driver-row-label');
@@ -708,7 +771,7 @@
                     const nameEl = document.getElementById('profile-display-name');
                     if (nameEl) nameEl.textContent = trimmed;
                     const avatarEl = document.getElementById('profile-avatar-initials');
-                    if (avatarEl) avatarEl.textContent = (trimmed.charAt(0) || 'U').toUpperCase();
+                    if (avatarEl && !user.avatar) avatarEl.textContent = (trimmed.charAt(0) || 'U').toUpperCase();
                     if (typeof window.showNavigoModal === 'function') {
                         window.showNavigoModal({
                             title: 'Cập nhật thành công',
@@ -769,6 +832,190 @@
                         });
                     }
                 }
+            });
+        }
+
+        // =========================================================================
+        // THAY ĐỔI ẢNH ĐẠI DIỆN TỪ THIẾT BỊ (DEVICE AVATAR UPLOAD & COMPRESSION)
+        // =========================================================================
+        function setupAvatarDeviceUpload() {
+            const wrapper = document.getElementById('profile-avatar-wrapper');
+            const fileInput = document.getElementById('input-avatar-device');
+            if (!fileInput) return;
+
+            if (wrapper && !wrapper._hasClickListener) {
+                wrapper._hasClickListener = true;
+                wrapper.addEventListener('click', (e) => {
+                    if (typeof window.triggerAvatarDevicePicker === 'function') {
+                        window.triggerAvatarDevicePicker(e);
+                    }
+                });
+            }
+
+            if (fileInput._hasInitListener) return;
+            fileInput._hasInitListener = true;
+
+            fileInput.addEventListener('change', async (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+
+                const isImg = (file.type && file.type.startsWith('image/')) || /\.(jpe?g|png|webp|gif|bmp|svg|jfif|heic)$/i.test(file.name || '');
+                if (!isImg) {
+                    if (typeof window.showNavigoModal === 'function') {
+                        window.showNavigoModal({
+                            title: 'Tệp không hợp lệ',
+                            message: 'Vui lòng chọn một tệp hình ảnh hợp lệ (PNG, JPG, JPEG, WEBP, GIF).',
+                            icon: '⚠️',
+                            confirmText: 'Đã hiểu',
+                            showCancel: false
+                        });
+                    } else {
+                        alert('Vui lòng chọn tệp hình ảnh hợp lệ!');
+                    }
+                    return;
+                }
+
+                if (file.size > 20 * 1024 * 1024) {
+                    if (typeof window.showNavigoModal === 'function') {
+                        window.showNavigoModal({
+                            title: 'Dung lượng quá lớn',
+                            message: 'Kích thước ảnh không được vượt quá 20MB.',
+                            icon: '⚠️',
+                            confirmText: 'Đã hiểu',
+                            showCancel: false
+                        });
+                    } else {
+                        alert('Kích thước ảnh không được vượt quá 20MB!');
+                    }
+                    return;
+                }
+
+                try {
+                    const dataUrl = await processAndCompressAvatarImage(file, 320, 320, 0.88);
+                    const user = (typeof sessionManager !== 'undefined') ? sessionManager.getUser() : null;
+                    if (!user) return;
+
+                    user.avatar = dataUrl;
+
+                    // 1. Cập nhật SessionManager & LocalStorage
+                    if (typeof sessionManager !== 'undefined' && typeof sessionManager.setUser === 'function') {
+                        sessionManager.setUser({ avatar: dataUrl });
+                    } else if (typeof sessionManager !== 'undefined' && typeof sessionManager.updateUser === 'function') {
+                        sessionManager.updateUser({ avatar: dataUrl });
+                    } else {
+                        localStorage.setItem('goride_user', JSON.stringify(user));
+                        localStorage.setItem('navigo_user', JSON.stringify(user));
+                    }
+
+                    // 2. Cập nhật danh sách người dùng ngoại tuyến (goride_offline_users)
+                    try {
+                        const offUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
+                        const uIdx = offUsers.findIndex(u => (u && u.id && u.id === user.id) || (u && u.email && u.email === user.email) || (u && u.phone && u.phone === user.phone));
+                        if (uIdx !== -1) {
+                            offUsers[uIdx].avatar = dataUrl;
+                            localStorage.setItem('goride_offline_users', JSON.stringify(offUsers));
+                        }
+                    } catch (e) {}
+
+                    // 3. Đồng bộ hóa Realtime Database Cloud (Firebase)
+                    try {
+                        if (typeof window.realtimeSync !== 'undefined' && user.id) {
+                            await window.realtimeSync.updateUserProfile(user.id, { avatar: dataUrl });
+                            if (user.role === 'driver') {
+                                if (window.realtimeSync.isAvailable && window.realtimeSync.isAvailable()) {
+                                    window.realtimeSync.db.ref(`goride_drivers/${user.id}/avatar`).set(dataUrl);
+                                } else if (window.realtimeSync.databaseURL && window.realtimeSync._restPatch) {
+                                    window.realtimeSync._restPatch(`goride_drivers/${user.id}`, { avatar: dataUrl });
+                                }
+                            }
+                        }
+                    } catch (fbErr) {}
+
+                    // 4. API Client
+                    if (typeof apiClient !== 'undefined' && typeof apiClient.updateProfile === 'function') {
+                        apiClient.updateProfile({ avatar: dataUrl }).catch(() => {});
+                    }
+
+                    // 5. Cập nhật giao diện ngay lập tức
+                    const avatarEl = document.getElementById('profile-avatar-initials');
+                    if (avatarEl) {
+                        avatarEl.innerHTML = `<img src="${dataUrl}" alt="${user.name || 'User'}" style="width:100%; height:100%; object-fit:cover; border-radius:50%; display:block;" />`;
+                    }
+                    document.querySelectorAll('[data-user-avatar]').forEach(el => {
+                        el.innerHTML = `<img src="${dataUrl}" alt="${user.name || 'User'}" style="width:100%; height:100%; object-fit:cover; border-radius:50%; display:block;" />`;
+                    });
+
+                    // 6. Thông báo thành công
+                    if (typeof window.showNavigoModal === 'function') {
+                        window.showNavigoModal({
+                            title: 'Cập nhật thành công',
+                            message: 'Ảnh đại diện của bạn đã được cập nhật từ thiết bị và đồng bộ an toàn trên hệ thống!',
+                            icon: '🖼️',
+                            confirmText: 'Tuyệt vời',
+                            showCancel: false
+                        });
+                    } else {
+                        alert('Đã cập nhật ảnh đại diện từ thiết bị thành công!');
+                    }
+                } catch (err) {
+                    console.error('Lỗi khi tải ảnh đại diện:', err);
+                    if (typeof window.showNavigoModal === 'function') {
+                        window.showNavigoModal({
+                            title: 'Lỗi tải ảnh',
+                            message: 'Không thể xử lý ảnh tải lên. Vui lòng thử lại với hình ảnh khác.',
+                            icon: '❌',
+                            confirmText: 'Đã hiểu',
+                            showCancel: false
+                        });
+                    } else {
+                        alert('Không thể xử lý ảnh, vui lòng thử lại!');
+                    }
+                }
+            });
+        }
+
+        function processAndCompressAvatarImage(file, maxW = 320, maxH = 320, quality = 0.88) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error('Không thể đọc tệp ảnh'));
+                reader.onload = (e) => {
+                    const rawDataUrl = e.target.result;
+                    const img = new Image();
+                    img.onerror = () => resolve(rawDataUrl);
+                    img.onload = () => {
+                        try {
+                            const { width, height } = img;
+                            if (width <= 0 || height <= 0) {
+                                return resolve(rawDataUrl);
+                            }
+
+                            // Center crop to square for circular avatar
+                            const side = Math.min(width, height);
+                            const sx = (width - side) / 2;
+                            const sy = (height - side) / 2;
+
+                            const targetSize = Math.min(side, maxW);
+                            const canvas = document.createElement('canvas');
+                            canvas.width = targetSize;
+                            canvas.height = targetSize;
+                            const ctx = canvas.getContext('2d');
+                            if (!ctx) {
+                                return resolve(rawDataUrl);
+                            }
+
+                            ctx.imageSmoothingEnabled = true;
+                            ctx.imageSmoothingQuality = 'high';
+                            ctx.drawImage(img, sx, sy, side, side, 0, 0, targetSize, targetSize);
+
+                            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+                            resolve(dataUrl);
+                        } catch (canvErr) {
+                            resolve(rawDataUrl);
+                        }
+                    };
+                    img.src = rawDataUrl;
+                };
+                reader.readAsDataURL(file);
             });
         }
 
@@ -1180,7 +1427,12 @@
             container.style.display = 'block';
 
             const role = (user.role || 'customer').toLowerCase();
+            const headerRatingBadge = document.getElementById('profile-header-rating-badge');
+
             if (role === 'admin') {
+                if (headerRatingBadge) {
+                    headerRatingBadge.innerHTML = `<span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:9999px; background:rgba(251,191,36,0.15); color:#d97706; font-weight:800; font-size:0.75rem; border:1px solid rgba(251,191,36,0.35);">🛡️ Quyền Quản trị viên</span>`;
+                }
                 container.innerHTML = `
                     <div style="background:linear-gradient(135deg, #0f2d3c 0%, #1e3a8a 100%); border-radius:20px; padding:20px; color:#ffffff; margin-bottom:18px; box-shadow:0 8px 24px rgba(15,45,60,0.18); border:1.5px solid rgba(251,191,36,0.35);">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.15); padding-bottom:10px;">
@@ -1217,47 +1469,81 @@
                 average: 5.0,
                 count: 0,
                 reviews: [],
-                starsBreakdown: { 5: 100, 4: 0, 3: 0, 2: 0, 1: 0 },
+                starsBreakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
                 badges: isDriver ? ['Lái xe an toàn', 'Thân thiện', 'Xe sạch sẽ'] : ['Thân thiện', 'Đúng giờ', 'Lịch sự']
             };
 
             if (typeof realtimeSync !== 'undefined' && typeof realtimeSync.getCounterpartyRating === 'function') {
-                ratingInfo = realtimeSync.getCounterpartyRating(user.id || user.phone, role, user.phone);
+                ratingInfo = realtimeSync.getCounterpartyRating(user.id || user.phone, role, user.phone, user.name);
             } else {
                 try {
                     const targetRole = isDriver ? 'driver' : 'customer';
-                    const targetId = user.id ? String(user.id) : '';
+                    const targetId = user.id ? String(user.id).trim() : '';
                     const targetPhone = user.phone ? String(user.phone).replace(/\D/g, '') : '';
+                    const targetName = user.name ? String(user.name).trim().toLowerCase() : '';
                     const history = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
                     const matched = history.filter(h => {
                         if (!h || h.toRole !== targetRole) return false;
-                        if (!targetId && !targetPhone) return false;
+                        if (!targetId && !targetPhone && !targetName) return false;
                         if (targetId && (h.toUserId === targetId || h.toUserPhone === targetId)) return true;
-                        if (targetPhone && h.toUserPhone) {
+                        if (targetPhone.length >= 7 && h.toUserPhone) {
                             const hp = String(h.toUserPhone).replace(/\D/g, '');
-                            if (hp && (hp === targetPhone || hp.endsWith(targetPhone) || targetPhone.endsWith(hp))) return true;
+                            if (hp.length >= 7 && (hp === targetPhone || hp.endsWith(targetPhone) || targetPhone.endsWith(hp))) return true;
                         }
+                        if (targetName && h.toUserName && h.toUserName.trim().toLowerCase() === targetName) return true;
                         return false;
                     });
                     if (matched.length > 0) {
                         let sum = 0;
-                        matched.forEach(m => sum += Number(m.rating || 5));
+                        const starsCount = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+                        matched.forEach(m => {
+                            const s = Math.min(5, Math.max(1, Math.round(Number(m.rating || 5))));
+                            starsCount[s] = (starsCount[s] || 0) + 1;
+                            sum += Number(m.rating || 5);
+                        });
                         ratingInfo.average = Number((sum / matched.length).toFixed(1));
                         ratingInfo.count = matched.length;
                         ratingInfo.reviews = matched.slice(0, 5);
+                        const breakdown = {};
+                        for (let i = 1; i <= 5; i++) {
+                            breakdown[i] = Math.round(((starsCount[i] || 0) / matched.length) * 100);
+                        }
+                        ratingInfo.starsBreakdown = breakdown;
                     } else {
                         ratingInfo.average = 5.0;
                         ratingInfo.count = 0;
                         ratingInfo.reviews = [];
+                        ratingInfo.starsBreakdown = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
                     }
                 } catch (e) {}
             }
 
-            const avgScore = Number(ratingInfo.average || 5.0).toFixed(1);
             const totalCount = ratingInfo.count || 0;
-            const bd = ratingInfo.starsBreakdown || { 5: 100, 4: 0, 3: 0, 2: 0, 1: 0 };
+            const avgScore = Number(ratingInfo.average || 5.0).toFixed(1);
+            const bd = ratingInfo.starsBreakdown || { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
             const badges = ratingInfo.badges || (isDriver ? ['Lái xe an toàn', 'Thân thiện', 'Xe sạch sẽ'] : ['Thân thiện', 'Đúng giờ', 'Lịch sự']);
             const reviews = ratingInfo.reviews || [];
+
+            // Update Header Rating Badge
+            if (headerRatingBadge) {
+                if (totalCount > 0) {
+                    headerRatingBadge.innerHTML = `
+                        <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:9999px; background:#fef3c7; color:#b45309; font-weight:800; font-size:0.76rem; border:1px solid #fde68a;">
+                            <span style="color:#f59e0b;">★</span>
+                            <span>${avgScore}</span>
+                            <span style="color:#059669; font-weight:700; margin-left:2px;">(${totalCount} đánh giá)</span>
+                        </span>
+                    `;
+                } else {
+                    headerRatingBadge.innerHTML = `
+                        <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:9999px; background:#f1f5f9; color:#64748b; font-weight:700; font-size:0.75rem; border:1px solid #e2e8f0;">
+                            <span style="color:#f59e0b;">★</span>
+                            <span>5.0</span>
+                            <span style="margin-left:2px;">(Tài khoản mới)</span>
+                        </span>
+                    `;
+                }
+            }
 
             let badgesHtml = badges.map(b => `<span style="padding:4px 10px; border-radius:9999px; background:#f0fdf4; color:#15803d; font-size:0.75rem; font-weight:700; border:1px solid #bbf7d0;">⭐ ${b}</span>`).join(' ');
 
@@ -1279,7 +1565,27 @@
                         </div>
                     </div>
                 `;
+            } else {
+                reviewsHtml = `
+                    <div style="border-top:1px dashed #e2e8f0; padding-top:12px; margin-top:14px; text-align:center; color:#64748b; font-size:0.8rem; font-style:italic;">
+                        Chưa có nhận xét nào từ ${roleTitle}. Hoàn thành các chuyến xe để nhận đánh giá và nâng cao uy tín tài khoản!
+                    </div>
+                `;
             }
+
+            let reputationLabel = 'Tài khoản mới 🌟';
+            let ratingDesc = `Tài khoản mới • Chưa có chuyến đánh giá nào từ ${roleTitle}`;
+            if (totalCount > 0) {
+                const numericScore = Number(avgScore);
+                if (numericScore >= 4.8) reputationLabel = 'Xuất sắc 🏆';
+                else if (numericScore >= 4.5) reputationLabel = 'Rất tốt ⭐';
+                else if (numericScore >= 4.0) reputationLabel = 'Khá 👍';
+                else reputationLabel = 'Cần cải thiện ⚠️';
+                ratingDesc = `Dựa trên ${totalCount} lượt đánh giá thực tế từ ${roleTitle}`;
+            }
+
+            const roundStar = totalCount > 0 ? Math.min(5, Math.max(1, Math.round(Number(avgScore)))) : 5;
+            const starSymbols = `${'★'.repeat(roundStar)}${'☆'.repeat(5 - roundStar)}`;
 
             container.innerHTML = `
                 <div style="background:#ffffff; border:1.5px solid #e2e8f0; border-radius:20px; padding:18px 20px; margin-bottom:18px; box-shadow:0 4px 18px rgba(15,45,60,0.06);">
@@ -1304,16 +1610,16 @@
                             </div>
                             <div>
                                 <div style="font-size:1.25rem; color:#f59e0b; letter-spacing:2px; margin-bottom:2px;">
-                                    ${'★'.repeat(Math.min(5, Math.max(1, Math.round(Number(avgScore)))))}${'☆'.repeat(Math.max(0, 5 - Math.round(Number(avgScore))))}
+                                    ${starSymbols}
                                 </div>
                                 <div style="font-size:0.78rem; color:#065f46; font-weight:700;">
-                                    ${totalCount > 0 ? `Dựa trên ${totalCount} lượt đánh giá thực tế` : 'Chưa có chuyến đánh giá nào (Mặc định 5.0)'}
+                                    ${ratingDesc}
                                 </div>
                             </div>
                         </div>
                         <div style="text-align:right;">
-                            <div style="font-size:0.72rem; color:#047857; font-weight:700; text-transform:uppercase;">Uy tín đối tác</div>
-                            <div style="font-size:0.95rem; font-weight:800; color:#059669; margin-top:2px;">Xuất sắc 🏆</div>
+                            <div style="font-size:0.72rem; color:#047857; font-weight:700; text-transform:uppercase;">Uy tín tài khoản</div>
+                            <div style="font-size:0.95rem; font-weight:800; color:#059669; margin-top:2px;">${reputationLabel}</div>
                         </div>
                     </div>
 
@@ -1322,21 +1628,21 @@
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="width:36px;">5 sao</span>
                             <div style="flex:1; height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden;">
-                                <div style="width:${bd[5] || 100}%; height:100%; background:#10b981; border-radius:4px;"></div>
+                                <div style="width:${bd[5] || 0}%; height:100%; background:#10b981; border-radius:4px; transition:width 0.3s ease;"></div>
                             </div>
-                            <span style="width:32px; text-align:right; font-weight:700;">${bd[5] || 100}%</span>
+                            <span style="width:32px; text-align:right; font-weight:700;">${bd[5] || 0}%</span>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="width:36px;">4 sao</span>
                             <div style="flex:1; height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden;">
-                                <div style="width:${bd[4] || 0}%; height:100%; background:#34d399; border-radius:4px;"></div>
+                                <div style="width:${bd[4] || 0}%; height:100%; background:#34d399; border-radius:4px; transition:width 0.3s ease;"></div>
                             </div>
                             <span style="width:32px; text-align:right; font-weight:700;">${bd[4] || 0}%</span>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="width:36px;">3 sao</span>
                             <div style="flex:1; height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden;">
-                                <div style="width:${bd[3] || 0}%; height:100%; background:#fbbf24; border-radius:4px;"></div>
+                                <div style="width:${bd[3] || 0}%; height:100%; background:#fbbf24; border-radius:4px; transition:width 0.3s ease;"></div>
                             </div>
                             <span style="width:32px; text-align:right; font-weight:700;">${bd[3] || 0}%</span>
                         </div>
@@ -1360,7 +1666,7 @@
             renderEcoRaceStats();
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             const user = (typeof sessionManager !== 'undefined') ? sessionManager.getUser() : null;
             if (!user) {
                 window.location.replace('login.html?redirect=profile.html');
@@ -1369,6 +1675,15 @@
             refreshAllProfileSections();
             initUserNameEdit();
             initUserPhoneEdit();
+            setupAvatarDeviceUpload();
+
+            // Đồng bộ đánh giá mới nhất từ Firebase Realtime Database
+            try {
+                if (typeof window.realtimeSync !== 'undefined' && typeof window.realtimeSync.syncRatingsFromCloud === 'function') {
+                    await window.realtimeSync.syncRatingsFromCloud();
+                    renderCounterpartyRating();
+                }
+            } catch (err) {}
         });
         window.addEventListener('session:change', refreshAllProfileSections);
         window.addEventListener('session:login', refreshAllProfileSections);
