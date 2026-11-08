@@ -952,6 +952,41 @@ class DriverController {
 
     // 3. Instant cross-tab sync when customer or admin places or cancels a ride, or changes online status
     window.addEventListener('storage', (e) => {
+      // Driver account lock / unlock signal from Admin
+      if (e.key === 'goride_user_lock_event') {
+        try {
+          const lockData = JSON.parse(e.newValue || '{}');
+          let curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+          if (!curUser) {
+            try { curUser = JSON.parse(localStorage.getItem('goride_user') || 'null'); } catch(e2) {}
+          }
+          const myId = curUser?.id || (curUser?.phone ? ('drv_' + curUser.phone) : null);
+          const isTargetDriver = curUser && (
+            lockData.userId === myId ||
+            lockData.userId === curUser.id ||
+            (curUser.email && lockData.email === curUser.email) ||
+            (curUser.phone && lockData.phone === curUser.phone)
+          );
+          if (isTargetDriver) {
+            if (lockData.status === 'locked') {
+              if (this.isOnline) {
+                this.setOnlineStatus(false, false);
+              }
+              if (typeof sessionManager !== 'undefined') {
+                sessionManager.updateUser({ status: 'locked' });
+              }
+              this.showLockedAccountNotice();
+            } else if (lockData.status === 'active') {
+              if (typeof sessionManager !== 'undefined') {
+                sessionManager.updateUser({ status: 'active' });
+              }
+              this.removeLockedAccountNotice();
+              this.showToast('Tài khoản đối tác của bạn đã được mở khóa!', 'success', 5000);
+            }
+          }
+        } catch (err) {}
+      }
+
       // Sync driver online state toggled from profile.html
       if (e.key === 'goride_driver_online_state') {
         const newOnline = (e.newValue === '1');
@@ -1051,7 +1086,79 @@ class DriverController {
       this.loadDriverProfileAndStats();
     });
 
-    // Trạng thái trực tuyến được duy trì an toàn khi chuyển trang và chỉ tắt khi tài xế chủ động gạt nút hoặc đăng xuất.
+    // Check if account is locked on startup
+    const initUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+    if (this.isAccountLocked(initUser)) {
+      this.showLockedAccountNotice();
+    }
+  }
+
+  isAccountLocked(user) {
+    if (!user) {
+      try {
+        user = JSON.parse(localStorage.getItem('goride_user') || 'null');
+      } catch (e) {}
+    }
+    if (!user) return false;
+    if (user.status === 'locked') return true;
+    try {
+      const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
+      const matched = offlineUsers.find(u => u.id === user.id || (user.email && u.email === user.email) || (user.phone && u.phone === user.phone));
+      if (matched && matched.status === 'locked') return true;
+    } catch (e) {}
+    try {
+      const adminDrivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
+      const dMatch = adminDrivers.find(d => d.id === user.id || (user.email && d.email === user.email) || (user.phone && d.phone === user.phone));
+      if (dMatch && dMatch.status === 'locked') return true;
+    } catch (e) {}
+    return false;
+  }
+
+  showLockedAccountNotice() {
+    this.isOnline = false;
+    localStorage.setItem('goride_driver_online_state', '0');
+    this.renderOnlineStatusUI();
+
+    const toggleCheckbox = document.getElementById('online-toggle');
+    if (toggleCheckbox) {
+      toggleCheckbox.checked = false;
+      toggleCheckbox.disabled = true;
+    }
+
+    let banner = document.getElementById('driver-locked-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'driver-locked-banner';
+      banner.style.cssText = 'position:fixed; top:16px; left:16px; right:16px; z-index:9999999; background:#fef2f2; border:1.5px solid #ef4444; color:#991b1b; padding:14px 20px; border-radius:14px; box-shadow:0 10px 30px rgba(239,68,68,0.3); display:flex; align-items:center; gap:14px; font-family:system-ui,-apple-system,sans-serif;';
+      banner.innerHTML = `
+        <span style="font-size:26px; line-height:1;">🚨</span>
+        <div style="flex:1;">
+          <div style="color:#b91c1c; font-size:14px; font-weight:800; letter-spacing:-0.2px;">TÀI KHOẢN ĐÃ BỊ TẠM KHÓA BỞI QUẢN TRỊ VIÊN</div>
+          <div style="font-size:12px; font-weight:500; color:#7f1d1d; margin-top:3px; line-height:1.4;">Tài khoản đối tác của bạn đã bị khóa. Bạn không thể bật trực tuyến hoặc nhận các chuyến xe mới. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.</div>
+        </div>
+      `;
+      document.body.appendChild(banner);
+    }
+
+    if (typeof window.showNavigoModal === 'function') {
+      window.showNavigoModal({
+        title: '🚨 Tài khoản bị tạm khóa',
+        message: 'Tài khoản của bạn đã bị Quản trị viên tạm khóa. Bạn tạm thời không thể bật trực tuyến hoặc nhận các chuyến xe mới. Vui lòng liên hệ tổng đài hỗ trợ Navigo: 1900 8888 để biết thêm chi tiết.',
+        icon: '🚨',
+        confirmText: 'Đã hiểu',
+        showCancel: false,
+        danger: true
+      });
+    }
+  }
+
+  removeLockedAccountNotice() {
+    const banner = document.getElementById('driver-locked-banner');
+    if (banner) banner.remove();
+    const toggleCheckbox = document.getElementById('online-toggle');
+    if (toggleCheckbox) {
+      toggleCheckbox.disabled = false;
+    }
   }
 
   async setOnlineStatus(isOnline, showNotification = true) {
@@ -1072,6 +1179,15 @@ class DriverController {
       } else {
         window.location.href = 'login.html?redirect=driver.html&role=driver';
       }
+      return;
+    }
+
+    // Strict Guard: Check if driver account has been locked by Administrator
+    if (this.isAccountLocked(user)) {
+      this.isOnline = false;
+      localStorage.setItem('goride_driver_online_state', '0');
+      this.renderOnlineStatusUI();
+      this.showLockedAccountNotice();
       return;
     }
 
@@ -1269,6 +1385,9 @@ class DriverController {
         heading: Number(this.currentHeading || this.currentPosition.heading || 0),
         timestamp: Date.now()
       };
+      try {
+        localStorage.setItem('goride_driver_last_location', JSON.stringify(this._latestDriverPosition));
+      } catch (e) {}
 
       // Update active trip driver location in memory and shared storage
       if (this.activeTrip) {
@@ -1348,17 +1467,26 @@ class DriverController {
           if (this.isOnline) {
             this.broadcastDriverLocation();
             this.updateDriverMapMarker();
-            if (this.mapController && typeof this.mapController.trimActiveRoutes === 'function') {
-              this.mapController.trimActiveRoutes(pos.coords.latitude, pos.coords.longitude);
-            }
 
-            // Dynamic road reroute when driver travels > 60 meters
-            if (this.activeTrip) {
-              const last = this._lastRouteDriverPos;
-              const moved = !last || (Math.abs(pos.coords.latitude - last.lat) > 0.0006 || Math.abs(pos.coords.longitude - last.lng) > 0.0006);
-              if (moved) {
-                this._lastRouteDriverPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-                this.renderStageMapRoute(this.activeTrip.stage === 'trip_in_progress' ? 2 : 1);
+            // Dynamic intelligent snake-eating route trimming and off-route detection
+            if (this.activeTrip && this.mapController) {
+              const trimRes = typeof this.mapController.trimActiveRoutes === 'function'
+                ? this.mapController.trimActiveRoutes(pos.coords.latitude, pos.coords.longitude, { stage: this.activeTrip.stage })
+                : null;
+
+              if (trimRes && trimRes.isOffRoute) {
+                // Driver deviated from the planned route (> 75 meters away)
+                this._offRouteTicks = (this._offRouteTicks || 0) + 1;
+                const now = Date.now();
+                // Reroute after 2 consecutive off-route ticks and minimum 6 seconds cooldown
+                if (this._offRouteTicks >= 2 && (!this._lastRerouteTime || (now - this._lastRerouteTime > 6000))) {
+                  this._lastRerouteTime = now;
+                  this._offRouteTicks = 0;
+                  this.handleOffRouteReroute(pos.coords.latitude, pos.coords.longitude);
+                }
+              } else if (trimRes && !trimRes.isOffRoute) {
+                // Driver is on route: smoothly trimmed like snake eating path, no flicker, no reroute!
+                this._offRouteTicks = 0;
               }
             }
           }
@@ -1867,6 +1995,15 @@ class DriverController {
   }
 
   async handleAcceptRequest(requestId) {
+    let curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+    if (this.isAccountLocked(curUser)) {
+      this.renderIncomingOfferDialog(null);
+      this.currentOffer = null;
+      this.incomingRequests = [];
+      this.showLockedAccountNotice();
+      return;
+    }
+
     const req = this.currentOffer || this.incomingRequests.find(r => String(r.id) === String(requestId));
     if (!req) return;
 
@@ -1942,7 +2079,7 @@ class DriverController {
       let driverVehicle = user?.vehicle?.model || vInfo.name;
       let driverName = user?.name || 'Tài xế đối tác';
       let driverRating = '5.0';
-      let driverPhone = (user && user.role === 'driver' && user.phone) ? user.phone : '0918765432';
+      let driverPhone = (user && user.role === 'driver' && user.phone) ? user.phone : (user?.id || '');
 
       try {
         const allDrivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
@@ -2723,8 +2860,9 @@ class DriverController {
       ];
     }
 
-    // 3. Real Street Network Graph for Central HCMC & Airport (OSM Road Network)
+    // 3. Real Street Network Graph for Greater HCMC (Central, East, North, West, Airport)
     const intersections = [
+      // Central D1/D3
       { id: 'bt', lat: 10.77250, lng: 106.69800 },         // Bến Thành
       { id: 'leloi_nkk', lat: 10.77330, lng: 106.69980 },   // Lê Lợi x Nam Kỳ Khởi Nghĩa
       { id: 'leloi_pas', lat: 10.77395, lng: 106.70070 },   // Lê Lợi x Pasteur
@@ -2747,17 +2885,48 @@ class DriverController {
       { id: 'nh_tdt', lat: 10.77200, lng: 106.70650 },      // Bến Bạch Đằng / Tôn Đức Thắng
       { id: 'tdt_ld', lat: 10.78450, lng: 106.70600 },      // Tôn Đức Thắng x Lê Duẩn
       { id: 'tdt_nhc', lat: 10.78750, lng: 106.71180 },     // Tôn Đức Thắng x Nguyễn Hữu Cảnh
-      { id: 'lm81', lat: 10.79510, lng: 106.72190 },        // Landmark 81
       { id: 'pht_ngasau', lat: 10.77145, lng: 106.69365 },  // Ngã Sáu Phù Đổng
       { id: 'cmt8_ntmk', lat: 10.77200, lng: 106.69100 },   // CMT8 x NTMK
       { id: 'cmt8_dbp', lat: 10.77700, lng: 106.68300 },    // CMT8 x Điện Biên Phủ
-      { id: 'bk_3t2', lat: 10.77200, lng: 106.65780 },      // ĐH Bách Khoa
+      { id: 'bk_3t2', lat: 10.77200, lng: 106.65780 },      // ĐH Bách Khoa / Ba Tháng Hai
       { id: 'nkk_dbp', lat: 10.78520, lng: 106.68950 },     // Nam Kỳ Khởi Nghĩa x Điện Biên Phủ
       { id: 'nkk_lct', lat: 10.79050, lng: 106.68300 },     // Nam Kỳ Khởi Nghĩa x Lý Chính Thắng
       { id: 'nvt_thl', lat: 10.79550, lng: 106.67750 },     // Nguyễn Văn Trỗi x Trần Huy Liệu
+      // Tan Binh & Airport
       { id: 'nvt_hvt', lat: 10.80100, lng: 106.66650 },     // Nguyễn Văn Trỗi x Hoàng Văn Thụ
-      { id: 'ts_airport', lat: 10.81200, lng: 106.66300 },  // Đường Trường Sơn
-      { id: 'tsn_airport', lat: 10.81850, lng: 106.65880 }  // Sân bay Tân Sơn Nhất
+      { id: 'lang_cha_ca', lat: 10.79900, lng: 106.65800 }, // Lăng Cha Cả
+      { id: 'ts_airport', lat: 10.81200, lng: 106.66300 },  // Đường Trường Sơn (Sân bay)
+      { id: 'cong_hoa_hht', lat: 10.80300, lng: 106.65000 },// Cộng Hòa x Hoàng Hoa Thám
+      { id: 'cong_hoa_tc', lat: 10.80600, lng: 106.64300 }, // Cộng Hòa x Trường Chinh
+      // Tan Phu & Dam Sen
+      { id: 'dam_sen', lat: 10.76800, lng: 106.63500 },     // Công viên nước Đầm Sen
+      { id: 'luy_ban_bich_hb', lat: 10.77100, lng: 106.63500 }, // Lũy Bán Bích x Hòa Bình
+      { id: 'lbb_tnh', lat: 10.78500, lng: 106.63200 },     // Lũy Bán Bích x Thoại Ngọc Hầu
+      { id: 'truong_chinh_au_co', lat: 10.79800, lng: 106.64200 }, // Trường Chinh x Âu Cơ / Ba Vân
+      // Binh Thanh & Thu Duc & Pham Van Dong
+      { id: 'lm81', lat: 10.79510, lng: 106.72190 },        // Landmark 81
+      { id: 'cau_sg', lat: 10.79900, lng: 106.72500 },      // Cầu Sài Gòn
+      { id: 'xlhn_thuduc', lat: 10.85100, lng: 106.77200 }, // Xa Lộ Hà Nội x Ngã Tư Thủ Đức
+      { id: 'cau_binh_trieu', lat: 10.81500, lng: 106.71000 }, // Cầu Bình Triệu / Đinh Bộ Lĩnh
+      { id: 'pvd_tsn', lat: 10.82200, lng: 106.67200 },     // Phạm Văn Đồng x Bạch Đằng (vòng ngoài sân bay)
+      { id: 'pvd_govap', lat: 10.82000, lng: 106.68500 },   // Phạm Văn Đồng x Phan Văn Trị
+      { id: 'pvd_ql13', lat: 10.82400, lng: 106.71200 },    // Phạm Văn Đồng x Quốc Lộ 13
+      { id: 'ql13_hiepbinh', lat: 10.83500, lng: 106.71500 }, // QL13 x Hiệp Bình
+      { id: 'ql13_binhphuoc', lat: 10.85000, lng: 106.72000 }, // Ngã Tư Bình Phước (QL13 x QL1A)
+      // District 9 & Tang Nhon Phu & Thu Duc
+      { id: 'tnp_duong_a', lat: 10.84380, lng: 106.78250 },     // 43/8 Đường A, Tăng Nhơn Phú
+      { id: 'tnp_vietinbank', lat: 10.84650, lng: 106.77900 },  // VietinBank Tăng Nhơn Phú (Lê Văn Việt)
+      { id: 'tnp_levanviet', lat: 10.84600, lng: 106.77850 },   // Lê Văn Việt x Man Thiện
+      { id: 'tnp_laxuanoai', lat: 10.84100, lng: 106.79000 },   // Hẻm 32 Lã Xuân Oai, Tăng Nhơn Phú
+      { id: 'tnp_hocvien', lat: 10.84450, lng: 106.78600 },     // Học viện Chính trị
+      { id: 'tnp_manthien', lat: 10.85050, lng: 106.78500 },    // Man Thiện
+      { id: 'thuduc_ufm', lat: 10.84900, lng: 106.78150 },      // ĐH Tài chính - Marketing (UFM)
+      { id: 'thuduc_ute', lat: 10.85080, lng: 106.77190 },      // ĐH Sư phạm Kỹ thuật (UTE)
+      // District 12 & An Phu Dong
+      { id: 'truong_chinh_an_suong', lat: 10.84500, lng: 106.61800 }, // Ngã Tư An Sương
+      { id: 'ql1a_tth', lat: 10.85500, lng: 106.64500 },    // QL1A x Tân Thới Hiệp
+      { id: 'ql1a_nga_tu_ga', lat: 10.86000, lng: 106.67800 }, // QL1A x Ngã Tư Ga
+      { id: 'an_phu_dong_d3', lat: 10.85200, lng: 106.69500 }  // Đường D3 / Vườn Lài (An Phú Đông)
     ];
 
     const roadAdj = {
@@ -2781,19 +2950,45 @@ class DriverController {
       nkk_dbp: ['nd_nkk', 'nkk_lct'],
       nkk_lct: ['nkk_dbp', 'nvt_thl'],
       nvt_thl: ['nkk_lct', 'nvt_hvt'],
-      nvt_hvt: ['nvt_thl', 'ts_airport'],
-      ts_airport: ['nvt_hvt', 'tsn_airport'],
+      nvt_hvt: ['nvt_thl', 'lang_cha_ca', 'ts_airport'],
+      lang_cha_ca: ['nvt_hvt', 'cong_hoa_hht', 'ts_airport'],
+      cong_hoa_hht: ['lang_cha_ca', 'cong_hoa_tc'],
+      cong_hoa_tc: ['cong_hoa_hht', 'truong_chinh_au_co', 'truong_chinh_an_suong'],
+      ts_airport: ['nvt_hvt', 'lang_cha_ca', 'pvd_tsn'],
+      pvd_tsn: ['ts_airport', 'pvd_govap'],
+      pvd_govap: ['pvd_tsn', 'pvd_ql13'],
+      pvd_ql13: ['pvd_govap', 'cau_binh_trieu', 'ql13_hiepbinh'],
+      cau_binh_trieu: ['pvd_ql13', 'tdt_nhc'],
+      ql13_hiepbinh: ['pvd_ql13', 'ql13_binhphuoc'],
+      ql13_binhphuoc: ['ql13_hiepbinh', 'an_phu_dong_d3', 'xlhn_thuduc'],
+      xlhn_thuduc: ['ql13_binhphuoc', 'cau_sg', 'thuduc_ute', 'thuduc_ufm'],
+      thuduc_ute: ['xlhn_thuduc', 'tnp_levanviet'],
+      thuduc_ufm: ['xlhn_thuduc', 'tnp_manthien', 'tnp_vietinbank'],
+      tnp_levanviet: ['thuduc_ute', 'tnp_vietinbank', 'tnp_manthien'],
+      tnp_vietinbank: ['tnp_levanviet', 'thuduc_ufm', 'tnp_duong_a'],
+      tnp_duong_a: ['tnp_vietinbank', 'tnp_hocvien'],
+      tnp_hocvien: ['tnp_duong_a', 'tnp_laxuanoai'],
+      tnp_laxuanoai: ['tnp_hocvien', 'tnp_manthien'],
+      tnp_manthien: ['tnp_levanviet', 'thuduc_ufm', 'tnp_laxuanoai'],
+      cau_sg: ['xlhn_thuduc', 'lm81'],
       nd_pas: ['nd_dk', 'nd_nkk'],
       nd_dk: ['ly_dk', 'ly_hbt', 'nd_pas'],
       nh_mtb: ['leloi_nh', 'nh_tdt'],
       nh_tdt: ['nh_mtb', 'tdt_ld'],
       tdt_ld: ['tdt_nhc', 'nh_tdt'],
-      tdt_nhc: ['lm81', 'tdt_ld'],
-      lm81: ['tdt_nhc'],
+      tdt_nhc: ['lm81', 'tdt_ld', 'cau_binh_trieu'],
+      lm81: ['tdt_nhc', 'cau_sg'],
       cmt8_ntmk: ['cmt8_dbp', 'pht_ngasau'],
       cmt8_dbp: ['bk_3t2', 'cmt8_ntmk'],
-      bk_3t2: ['cmt8_dbp'],
-      tsn_airport: ['ts_airport']
+      bk_3t2: ['cmt8_dbp', 'dam_sen'],
+      dam_sen: ['bk_3t2', 'luy_ban_bich_hb'],
+      luy_ban_bich_hb: ['dam_sen', 'lbb_tnh'],
+      lbb_tnh: ['luy_ban_bich_hb', 'truong_chinh_au_co'],
+      truong_chinh_au_co: ['lbb_tnh', 'cong_hoa_tc', 'truong_chinh_an_suong'],
+      truong_chinh_an_suong: ['truong_chinh_au_co', 'cong_hoa_tc', 'ql1a_tth'],
+      ql1a_tth: ['truong_chinh_an_suong', 'ql1a_nga_tu_ga'],
+      ql1a_nga_tu_ga: ['ql1a_tth', 'an_phu_dong_d3'],
+      an_phu_dong_d3: ['ql1a_nga_tu_ga', 'ql13_binhphuoc']
     };
 
     const calcDist = (lat1, lon1, lat2, lon2) => {
@@ -2817,9 +3012,23 @@ class DriverController {
 
     const startRes = findNearestNode(fLat, fLng);
     const endRes = findNearestNode(tLat, tLng);
+    const directDist = calcDist(fLat, fLng, tLat, tLng);
 
-    // If both within 3000m of the road network, find authentic street route via BFS
-    if (startRes.dist <= 3000 && endRes.dist <= 3000 && startRes.node.id !== endRes.node.id) {
+    // Sanity Check: For short direct trips (< 1.2km) or if snapping to nodes creates an unnatural detour (> directDist)
+    // generate a clean direct street corridor directly between pickup and destination
+    if (directDist < 1200 || (startRes.dist > directDist * 0.7 && endRes.dist > directDist * 0.7)) {
+      const dLat_diff = tLat - fLat;
+      const dLng_diff = tLng - fLng;
+      return [
+        [fLat, fLng],
+        [Number((fLat + dLat_diff * 0.33 + dLat_diff * 0.03).toFixed(6)), Number((fLng + dLng_diff * 0.33 - dLng_diff * 0.02).toFixed(6))],
+        [Number((fLat + dLat_diff * 0.67 - dLat_diff * 0.02).toFixed(6)), Number((fLng + dLng_diff * 0.67 + dLng_diff * 0.03).toFixed(6))],
+        [tLat, tLng]
+      ];
+    }
+
+    // If both nodes are identified, find authentic street route via BFS
+    if (startRes.node.id !== endRes.node.id) {
       const queue = [[startRes.node.id]];
       const visited = new Set([startRes.node.id]);
       let bestPathIds = null;
@@ -2892,6 +3101,62 @@ class DriverController {
       [tLat - (tLat - midLat) * 0.4, tLng - (tLng - midLng) * 0.05],
       [tLat, tLng]
     ];
+  }
+
+  /**
+   * Intelligently recalculates the shortest road route when driver deviates off-route (> 75m)
+   * Updates map polyline in-place without screen flickering or zooming.
+   */
+  async handleOffRouteReroute(driverLat, driverLng) {
+    if (!this.activeTrip || !this.mapController) return;
+    const isProg = this.activeTrip.stage === 'trip_in_progress';
+    const coords = this.getTripCoordinates(this.activeTrip);
+    const origin = [driverLat, driverLng];
+    const target = isProg
+      ? (coords?.destination || this.activeTrip.destinationCoords || [10.7951, 106.7219])
+      : (coords?.pickup || this.activeTrip.pickupCoords || [10.7725, 106.6980]);
+
+    const targetCoords = [
+      Number(Array.isArray(target) ? target[0] : (target.lat || target.latitude || 10.7725)),
+      Number(Array.isArray(target) ? target[1] : (target.lng || target.lon || target.longitude || 106.6980))
+    ];
+
+    try {
+      const newPath = await this.calculateNavigationRoute(origin, targetCoords);
+      if (Array.isArray(newPath) && newPath.length > 1) {
+        if (isProg) {
+          this.activeTrip.routeGeometry = newPath;
+          if (typeof this.mapController.updateRouteGeometry === 'function') {
+            this.mapController.updateRouteGeometry(newPath, {
+              color: '#10b981',
+              weight: 6,
+              opacity: 0.95
+            });
+          }
+        } else {
+          this.activeTrip.driverApproachGeometry = newPath;
+          if (typeof this.mapController.updateRouteGeometry === 'function') {
+            this.mapController.updateRouteGeometry(newPath, {
+              color: '#0288d1',
+              weight: 6,
+              opacity: 0.95
+            });
+          }
+        }
+
+        // Persist updated route to active trip
+        try {
+          const act = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
+          if (act && (act.id === this.activeTrip.id || !act.id)) {
+            if (isProg) act.routeGeometry = newPath;
+            else act.driverApproachGeometry = newPath;
+            localStorage.setItem('goride_active_trip', JSON.stringify(act));
+          }
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.warn('[Driver] Off-route reroute error:', err);
+    }
   }
 
   generateStreetPath(fromPoint, toPoint) {
@@ -3137,9 +3402,9 @@ class DriverController {
           distance: trip.distance || '3.2',
           stage: isProg ? 'trip_in_progress' : (String(trip.status || '').toUpperCase() === 'ARRIVED' ? 'arrived_at_pickup' : 'heading_to_pickup'),
           status: String(trip.status || (isProg ? 'IN_PROGRESS' : 'ACCEPTED')).toUpperCase(),
-          customerPhone: trip.customerPhone || trip.phone || '0901234567',
+          customerPhone: trip.customerPhone || trip.phone || '',
           driverName: trip.driverName,
-          driverPhone: trip.driverPhone || '0918765432',
+          driverPhone: trip.driverPhone || (user?.phone || user?.id || ''),
           licensePlate: trip.licensePlate,
           vehicleModel: trip.vehicleModel,
           vehicleType: trip.vehicleType,
@@ -3203,14 +3468,16 @@ class DriverController {
       if (window.NaviWalletEngine) {
         // 1. Deduct customer wallet upon successful completion (isolated)
         try {
-          const custPhone = completedTrip.customerPhone || completedTrip.phone || '0901234567';
-          const curCustWallet = window.NaviWalletEngine.getWallet(custPhone);
-          const alreadyPaidByCust = curCustWallet && Array.isArray(curCustWallet.transactions) && curCustWallet.transactions.some(t => t.tripId === completedTrip.id || (t.id && t.id.includes(completedTrip.id)));
-          if (!alreadyPaidByCust) {
-            window.NaviWalletEngine.payTrip(custPhone, completedFare, completedTrip.id, {
-              pickupName: completedTrip.pickup?.name || completedTrip.pickupName || completedTrip.pickup || 'Điểm đón',
-              dropoffName: completedTrip.destination?.name || completedTrip.dropoffName || completedTrip.destination || 'Điểm đến'
-            });
+          const custPhone = completedTrip.customerPhone || completedTrip.phone || completedTrip.customerId || completedTrip.userId || '';
+          if (custPhone) {
+            const curCustWallet = window.NaviWalletEngine.getWallet(custPhone);
+            const alreadyPaidByCust = curCustWallet && Array.isArray(curCustWallet.transactions) && curCustWallet.transactions.some(t => t.tripId === completedTrip.id || (t.id && t.id.includes(completedTrip.id)));
+            if (!alreadyPaidByCust) {
+              window.NaviWalletEngine.payTrip(custPhone, completedFare, completedTrip.id, {
+                pickupName: completedTrip.pickup?.name || completedTrip.pickupName || completedTrip.pickup || 'Điểm đón',
+                dropoffName: completedTrip.destination?.name || completedTrip.dropoffName || completedTrip.destination || 'Điểm đến'
+              });
+            }
           }
         } catch (custWalletErr) {
           console.warn('[DriverWallet] Customer deduction notice:', custWalletErr);
@@ -3223,13 +3490,12 @@ class DriverController {
           
           if (completedTrip.driverPhone) targetDriverPhones.add(completedTrip.driverPhone);
           if (curDriver && curDriver.phone) targetDriverPhones.add(curDriver.phone);
-          targetDriverPhones.add('0918765432');
 
           targetDriverPhones.forEach(dPhone => {
             if (!dPhone) return;
             window.NaviWalletEngine.creditDriverTrip(dPhone, completedFare, completedTrip.id, {
               customerName: completedTrip.customerName || 'Khách hàng Navigo',
-              customerPhone: completedTrip.customerPhone || completedTrip.phone || '0901234567',
+              customerPhone: completedTrip.customerPhone || completedTrip.phone || '',
               pickup: completedTrip.pickup?.name || completedTrip.pickupName || completedTrip.pickup,
               destination: completedTrip.destination?.name || completedTrip.dropoffName || completedTrip.destination
             });
@@ -3264,9 +3530,26 @@ class DriverController {
 
     // 2. Persist in driver's completed trips list
     try {
+      const curDriver = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+      if (curDriver) {
+        completedTrip.driverId = curDriver.id || completedTrip.driverId;
+        completedTrip.driverPhone = curDriver.phone || completedTrip.driverPhone;
+        completedTrip.driverName = curDriver.name || completedTrip.driverName;
+        completedTrip.driverEmail = curDriver.email || completedTrip.driverEmail;
+
+        const dKey = String(curDriver.id || curDriver.phone || 'default').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const myTripsKey = 'goride_driver_trips_' + dKey;
+        const myTrips = JSON.parse(localStorage.getItem(myTripsKey) || '[]');
+        if (!myTrips.some(t => t && t.id === completedTrip.id)) {
+          myTrips.unshift(completedTrip);
+          localStorage.setItem(myTripsKey, JSON.stringify(myTrips));
+        }
+      }
       const driverTrips = JSON.parse(localStorage.getItem('goride_driver_trips') || '[]');
-      driverTrips.unshift(completedTrip);
-      localStorage.setItem('goride_driver_trips', JSON.stringify(driverTrips));
+      if (!driverTrips.some(t => t && t.id === completedTrip.id)) {
+        driverTrips.unshift(completedTrip);
+        localStorage.setItem('goride_driver_trips', JSON.stringify(driverTrips));
+      }
     } catch (err) {}
 
     // 3. Persist in unified Admin trips storage
@@ -3568,6 +3851,60 @@ class DriverController {
     this.renderTripHistory(filter);
   }
 
+  getDriverCompletedTrips(curDriver = null) {
+    if (!curDriver) {
+      curDriver = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+    }
+    if (!curDriver) return [];
+
+    const normPhone = (p) => (p || '').replace(/[^0-9]/g, '');
+    const dId = String(curDriver.id || '').trim();
+    const dPhone = normPhone(curDriver.phone);
+    const dEmail = curDriver.email ? String(curDriver.email).toLowerCase().trim() : '';
+
+    const dKey = String(curDriver.id || curDriver.phone || 'default').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const myTripsKey = 'goride_driver_trips_' + dKey;
+
+    let pool = [];
+    try {
+      pool = JSON.parse(localStorage.getItem(myTripsKey) || '[]');
+      if (!Array.isArray(pool)) pool = [];
+    } catch(e) { pool = []; }
+
+    const isMyTrip = (t) => {
+      if (!t) return false;
+      if (dId && (String(t.driverId) === dId || String(t.driver_id) === dId)) return true;
+      if (dPhone && (normPhone(t.driverPhone) === dPhone || normPhone(t.driver_phone) === dPhone)) return true;
+      if (dEmail && (String(t.driverEmail || '').toLowerCase().trim() === dEmail || String(t.driver_email || '').toLowerCase().trim() === dEmail)) return true;
+      return false;
+    };
+
+    try {
+      const allDriverTrips = JSON.parse(localStorage.getItem('goride_driver_trips') || '[]');
+      if (Array.isArray(allDriverTrips)) {
+        allDriverTrips.forEach(t => {
+          if (isMyTrip(t) && !pool.some(x => String(x.id) === String(t.id))) {
+            pool.push(t);
+          }
+        });
+      }
+    } catch(e) {}
+
+    try {
+      const adminTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
+      if (Array.isArray(adminTrips)) {
+        adminTrips.forEach(t => {
+          if (t && t.status === 'completed' && isMyTrip(t) && !pool.some(x => String(x.id) === String(t.id))) {
+            pool.push(t);
+          }
+        });
+      }
+    } catch(e) {}
+
+    const checkMock = (typeof isMockTrip === 'function') ? isMockTrip : (t => ['trip_vn_101', 'trip_vn_102', 'trip_vn_103', 'trip_vn_104'].includes(t?.id));
+    return pool.filter(t => !checkMock(t));
+  }
+
   renderTripHistory(filter = 'all') {
     this.currentHistoryFilter = filter;
     const container = document.getElementById('driver-trips-list');
@@ -3577,17 +3914,8 @@ class DriverController {
       purgeAllMockTrips();
     }
 
-    let trips = [];
+    let trips = this.getDriverCompletedTrips();
     try {
-      trips = JSON.parse(localStorage.getItem('goride_driver_trips') || '[]');
-      if (trips.length === 0) {
-        // Fallback check in goride_admin_trips with completed status
-        const adminTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
-        trips = adminTrips.filter(t => t.status === 'completed');
-      }
-      const checkMock = (typeof isMockTrip === 'function') ? isMockTrip : (t => ['trip_vn_101', 'trip_vn_102', 'trip_vn_103', 'trip_vn_104'].includes(t?.id));
-      trips = trips.filter(t => !checkMock(t));
-
       // Sanitize trip names if accidentally missing
       let changed = false;
       trips = trips.map(t => {
@@ -3606,7 +3934,11 @@ class DriverController {
         return t;
       });
       if (changed) {
-        try { localStorage.setItem('goride_driver_trips', JSON.stringify(trips)); } catch(e) {}
+        try {
+          const curDriver = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+          const dKey = curDriver ? String(curDriver.id || curDriver.phone || 'default').toLowerCase().replace(/[^a-z0-9_]/g, '_') : 'default';
+          localStorage.setItem('goride_driver_trips_' + dKey, JSON.stringify(trips));
+        } catch(e) {}
       }
     } catch {
       trips = [];
@@ -3681,16 +4013,7 @@ class DriverController {
      ========================================================================== */
 
   renderEarningsReport() {
-    let trips = [];
-    try {
-      trips = JSON.parse(localStorage.getItem('goride_driver_trips') || '[]');
-      if (trips.length === 0) {
-        const adminTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
-        trips = adminTrips.filter(t => t.status === 'completed');
-      }
-    } catch {
-      trips = [];
-    }
+    let trips = this.getDriverCompletedTrips();
 
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
@@ -3705,10 +4028,10 @@ class DriverController {
 
     // Get wallet balance from NaviWalletEngine or user profile
     const user = typeof sessionManager !== 'undefined' ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-    let drvPhone = (user && user.role === 'driver' && user.phone) ? user.phone : '0918765432';
+    let drvIdentifier = (user && user.role === 'driver') ? (user.phone || user.id) : null;
     let userWallet = 0;
-    if (window.NaviWalletEngine) {
-      const w = window.NaviWalletEngine.getWallet(drvPhone);
+    if (window.NaviWalletEngine && drvIdentifier) {
+      const w = window.NaviWalletEngine.getWallet(drvIdentifier);
       if (w) userWallet = w.balance;
     }
     if (userWallet === 0 && user && user.role === 'driver' && typeof user.walletBalance === 'number') {
@@ -3825,9 +4148,9 @@ class DriverController {
           }
         });
 
-        const drvPhone = user.phone || '0918765432';
-        if (window.NaviWalletEngine) {
-          const w = window.NaviWalletEngine.getWallet(drvPhone);
+        const drvIdentifier = (user && user.role === 'driver') ? (user.phone || user.id) : null;
+        if (window.NaviWalletEngine && drvIdentifier) {
+          const w = window.NaviWalletEngine.getWallet(drvIdentifier);
           if (w) {
             this.driverStats.walletBalance = w.balance;
             user.walletBalance = w.balance;
@@ -3842,20 +4165,22 @@ class DriverController {
         }
       }
 
-      // Calculate today stats from completed trips
-      let trips = [];
-      try {
-        trips = JSON.parse(localStorage.getItem('goride_driver_trips') || '[]');
-      } catch {
-        trips = [];
-      }
+      // Calculate today stats from completed trips of this driver only
+      let trips = this.getDriverCompletedTrips(user);
       const todayStr = new Date().toISOString().split('T')[0];
       const todayTrips = trips.filter(t => (t.completedAt || '').startsWith(todayStr));
 
       this.driverStats.tripsToday = todayTrips.length;
       this.driverStats.earnings = todayTrips.reduce((s, t) => s + (Number(t.fare) || 0), 0);
-      if (this.driverStats.walletBalance === 0 && trips.length > 0) {
-        this.driverStats.walletBalance = trips.reduce((s, t) => s + (Number(t.fare) || 0), 0);
+
+      // Load driver rating from counterparty reviews (scoped to this driver)
+      if (window.realtimeSync && typeof window.realtimeSync.getCounterpartyRating === 'function' && user) {
+        const ratingData = window.realtimeSync.getCounterpartyRating(user.id || user.phone, 'driver', user.phone);
+        if (ratingData) {
+          this.driverStats.rating = ratingData.count > 0 ? ratingData.average : (user.rating || 5.0);
+        }
+      } else if (user && typeof user.rating === 'number') {
+        this.driverStats.rating = user.rating;
       }
 
       this.renderDriverStats();
@@ -3867,9 +4192,9 @@ class DriverController {
   syncNaviWalletBalance() {
     try {
       const curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-      let drvPhone = (curUser && curUser.role === 'driver' && curUser.phone) ? curUser.phone : '0918765432';
-      if (window.NaviWalletEngine) {
-        const w = window.NaviWalletEngine.getWallet(drvPhone);
+      let drvIdentifier = (curUser && curUser.role === 'driver') ? (curUser.phone || curUser.id) : null;
+      if (window.NaviWalletEngine && drvIdentifier) {
+        const w = window.NaviWalletEngine.getWallet(drvIdentifier);
         if (w) {
           this.driverStats.walletBalance = w.balance;
           if (curUser && curUser.role === 'driver') {
@@ -3890,7 +4215,10 @@ class DriverController {
 
     if (tripsEl) tripsEl.textContent = this.driverStats.tripsToday;
     if (earnEl) earnEl.textContent = Number(this.driverStats.earnings || 0).toLocaleString('vi-VN') + ' ₫';
-    if (ratingEl) ratingEl.textContent = '5.0 ★';
+    if (ratingEl) {
+      const curRating = this.driverStats.rating || 5.0;
+      ratingEl.textContent = Number(curRating).toFixed(1) + ' ★';
+    }
   }
 
   renderAccountTab() {

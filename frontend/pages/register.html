@@ -383,6 +383,51 @@
                 offlineUsers.push(newUser);
                 localStorage.setItem('goride_offline_users', JSON.stringify(offlineUsers));
 
+                // 4b. Khởi tạo dữ liệu ví và lịch sử hoàn toàn cô lập cho tài khoản mới (Không dính dữ liệu tài khoản khác)
+                try {
+                    const cleanPhone = (phone || '').replace(/\D/g, '');
+                    const cleanWallets = JSON.parse(localStorage.getItem('navigo_wallets') || '{}');
+                    const initialWallet = {
+                        accountNumber: cleanPhone || userId,
+                        phone: cleanPhone || phone,
+                        userId: userId,
+                        balance: 0,
+                        transactions: [],
+                        role: currentRole,
+                        fullName: (name || '').toUpperCase()
+                    };
+                    if (cleanPhone) cleanWallets[cleanPhone] = initialWallet;
+                    cleanWallets[userId] = initialWallet;
+                    localStorage.setItem('navigo_wallets', JSON.stringify(cleanWallets));
+
+                    // Dọn dẹp triệt để bất kỳ key chuyến đi hoặc thống kê trùng định danh cũ
+                    const keysToClean = [
+                        cleanPhone ? `goride_trips_${cleanPhone}` : null,
+                        `goride_trips_${userId}`,
+                        cleanPhone ? `goride_driver_trips_${cleanPhone}` : null,
+                        `goride_driver_trips_${userId}`,
+                        cleanPhone ? `navigo_eco_stats_${cleanPhone}` : null,
+                        `navigo_eco_stats_${userId}`,
+                        cleanPhone ? `navigo_user_notifs_${cleanPhone}` : null,
+                        `navigo_user_notifs_${userId}`
+                    ].filter(Boolean);
+                    keysToClean.forEach(k => {
+                        try { localStorage.removeItem(k); } catch(e) {}
+                    });
+
+                    // Đảm bảo không dính bất kỳ đánh giá cũ nào cho tài khoản mới tinh này
+                    const allRatings = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
+                    const filteredRatings = allRatings.filter(r => {
+                        if (!r) return false;
+                        if (r.toUserId === userId) return false;
+                        if (cleanPhone && r.toUserPhone && r.toUserPhone.replace(/\D/g, '') === cleanPhone) return false;
+                        return true;
+                    });
+                    localStorage.setItem('navigo_ratings_history', JSON.stringify(filteredRatings));
+                } catch (initErr) {
+                    console.warn('[Register] Error initializing isolated data:', initErr);
+                }
+
                 if (currentRole === 'driver') {
                     const pendingData = {
                         id: userId,

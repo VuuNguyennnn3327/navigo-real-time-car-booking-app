@@ -403,7 +403,27 @@ class SessionManager {
 
             // If a valid user session is found, RESTORE IT AND KEEP IT ALIVE!
             if (rawUser && isValidUserJson(rawUser)) {
-                this.currentUser = JSON.parse(rawUser);
+                const parsedUser = JSON.parse(rawUser);
+                try {
+                    const deleted = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
+                    const delSet = new Set(deleted.map(x => String(x).toLowerCase().trim()));
+                    const uid = parsedUser.id ? String(parsedUser.id).toLowerCase().trim() : '';
+                    const uemail = parsedUser.email ? String(parsedUser.email).toLowerCase().trim() : '';
+                    const uphone = parsedUser.phone ? String(parsedUser.phone).replace(/\D/g, '') : '';
+                    if ((uid && delSet.has(uid)) || (uemail && delSet.has(uemail)) || (uphone && delSet.has(uphone))) {
+                        this.currentUser = null;
+                        this.token = null;
+                        try {
+                            localStorage.removeItem('goride_user');
+                            localStorage.removeItem('navigo_user');
+                            localStorage.removeItem('ride_rtree_user');
+                            sessionStorage.removeItem(SESSION_STORAGE_KEYS.USER);
+                        } catch(e) {}
+                        return;
+                    }
+                } catch (e) {}
+
+                this.currentUser = parsedUser;
                 this.token = token || ('token_' + Date.now());
                 this._isLoggedOut = false;
 
@@ -463,6 +483,27 @@ class SessionManager {
             throw new Error('Invalid user data provided to login()');
         }
 
+        if (userData.status === 'locked') {
+            const err = new Error('Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.');
+            err.code = 'ACCOUNT_LOCKED';
+            throw err;
+        }
+
+        try {
+            const deleted = JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]');
+            const delSet = new Set(deleted.map(x => String(x).toLowerCase().trim()));
+            const uid = userData.id ? String(userData.id).toLowerCase().trim() : '';
+            const uemail = userData.email ? String(userData.email).toLowerCase().trim() : '';
+            const uphone = userData.phone ? String(userData.phone).replace(/\D/g, '') : '';
+            if ((uid && delSet.has(uid)) || (uemail && delSet.has(uemail)) || (uphone && delSet.has(uphone))) {
+                const err = new Error('Tài khoản này đã bị xóa vĩnh viễn khỏi hệ thống Navigo.');
+                err.code = 'ACCOUNT_DELETED';
+                throw err;
+            }
+        } catch (delErr) {
+            if (delErr.code === 'ACCOUNT_DELETED') throw delErr;
+        }
+
         try {
             localStorage.removeItem('goride_logged_out');
         } catch (e) {}
@@ -479,6 +520,14 @@ class SessionManager {
             localStorage.setItem('ride_rtree_user', JSON.stringify(this.currentUser));
             localStorage.setItem('ride_rtree_token', this.token);
             localStorage.setItem('navigo_token', this.token);
+
+            // Bind active wallet phone to newly logged-in user to prevent wallet crosstalk
+            const cleanPhone = (this.currentUser.phone || '').replace(/\D/g, '') || this.currentUser.id;
+            if (cleanPhone) {
+                localStorage.setItem('navigo_active_wallet_phone', cleanPhone);
+            } else {
+                localStorage.removeItem('navigo_active_wallet_phone');
+            }
         } catch (error) {
             console.error('[SessionManager] Error saving to storage:', error);
         }
@@ -549,6 +598,7 @@ class SessionManager {
                 'goride_user', 'goride_token',
                 'navigo_user', 'navigo_token',
                 'user', 'token', 'currentUser', 'session_user', 'user_token', 'auth_token',
+                'navigo_active_wallet_phone',
                 'goride_active_trip', 'goride_driver_online_state', 'navigo_driver_online_state',
                 'goride_driver_last_location', 'goride_pending_trip_offers', 'goride_current_order',
                 'goride_handled_offers',
@@ -587,6 +637,7 @@ class SessionManager {
                     'goride_user', 'goride_token',
                     'navigo_user', 'navigo_token',
                     'user', 'token', 'currentUser', 'session_user', 'user_token', 'auth_token',
+                    'navigo_active_wallet_phone',
                     'goride_active_trip', 'goride_driver_online_state', 'navigo_driver_online_state',
                     'goride_driver_last_location', 'goride_pending_trip_offers', 'goride_current_order',
                     'goride_handled_offers',

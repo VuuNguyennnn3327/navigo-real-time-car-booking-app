@@ -779,7 +779,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
     <script src="../js/core/firebase-config.js"></script>
     <script src="../js/core/api.js"></script>
-    <script src="../js/core/session.js?v=20261106_v5"></script>
+    <script src="../js/core/session.js?v=20261109_v12"></script>
     <script src="../js/core/geocoder.js"></script>
     <script src="../js/core/wallet.js"></script>
     <script src="../js/core/realtime.js"></script>
@@ -831,7 +831,18 @@
             { keys: ['go vap', 'quang trung'], lat: 10.8388, lng: 106.6653, name: 'Quận Gò Vấp, TP.HCM' },
             { keys: ['binh thanh', 'hang xanh'], lat: 10.8031, lng: 106.7001, name: 'Ngã tư Hàng Xanh, Bình Thạnh' },
             { keys: ['quan 7', 'phu my hung'], lat: 10.7335, lng: 106.7214, name: 'Phú Mỹ Hưng, Quận 7' },
-            { keys: ['tan binh', 'cong hoa'], lat: 10.8015, lng: 106.6558, name: 'Cộng Hòa, Tân Bình' }
+            { keys: ['tan binh', 'cong hoa'], lat: 10.8015, lng: 106.6558, name: 'Cộng Hòa, Tân Bình' },
+            // Khu vực TP. Thủ Đức / Quận 9 / Tăng Nhơn Phú
+            { keys: ['43/8 duong a', 'duong a, tang nhon phu', 'duong a'], lat: 10.8438, lng: 106.7825, name: '43/8 Đường A, Tăng Nhơn Phú' },
+            { keys: ['viettin bank', 'vietinbank', 'viettinbank', 'ngan hang vietinbank'], lat: 10.8465, lng: 106.7790, name: 'VietinBank, Tăng Nhơn Phú' },
+            { keys: ['le van viet', 'duong le van viet'], lat: 10.8460, lng: 106.7785, name: 'Lê Văn Việt, Tăng Nhơn Phú' },
+            { keys: ['la xuan oai', 'hem 32 duong la xuan oai', '32 la xuan oai', '32 duong la xuan oai'], lat: 10.8410, lng: 106.7900, name: 'Hẻm 32 Đường Lã Xuân Oai, Tăng Nhơn Phú' },
+            { keys: ['hoc vien chinh tri', 'hoc vien chinh tri - hanh chinh', 'chinh tri hanh chinh'], lat: 10.8445, lng: 106.7860, name: 'Học viện Chính trị - Hành chính, Tăng Nhơn Phú' },
+            { keys: ['man thien', 'duong man thien'], lat: 10.8505, lng: 106.7850, name: 'Man Thiện, Tăng Nhơn Phú' },
+            { keys: ['tai chinh marketing', 'dh tai chinh marketing', 'ufm'], lat: 10.8490, lng: 106.7815, name: 'Đại học Tài chính - Marketing (Tăng Nhơn Phú)' },
+            { keys: ['su pham ky thuat', 'hcmute', 'ute', 'spkt'], lat: 10.8508, lng: 106.7719, name: 'Đại học Sư phạm Kỹ thuật TP.HCM' },
+            { keys: ['tang nhon phu a', 'tang nhon phu b', 'tang nhon phu'], lat: 10.8450, lng: 106.7810, name: 'Tăng Nhơn Phú, TP. Thủ Đức' },
+            { keys: ['nga tu thu duc', 'nga 4 thu duc'], lat: 10.8515, lng: 106.7725, name: 'Ngã tư Thủ Đức' }
         ];
 
         // Resolves latitude & longitude array [lat, lng] from coordinate objects, arrays or string names
@@ -1163,21 +1174,23 @@
         // Validate whether a route line strictly connects pickup to destination without noise or detours
         function isRouteGeometryValid(coords, pCoords, dCoords) {
             if (!Array.isArray(coords) || coords.length < 2) return false;
+            if (!pCoords || !dCoords || !Array.isArray(pCoords) || !Array.isArray(dCoords)) return false;
+
             const start = coords[0];
             const end = coords[coords.length - 1];
             if (!Array.isArray(start) || !Array.isArray(end) || start.length < 2 || end.length < 2) return false;
 
-            // Start must be near pickup (<= 0.035 deg ~ 3.8km)
+            // Start must be strictly close to pickup (<= 0.0028 deg ~ 300m)
             const dStart = Math.hypot(start[0] - pCoords[0], start[1] - pCoords[1]);
-            // End must be near destination (<= 0.035 deg ~ 3.8km)
+            // End must be strictly close to destination (<= 0.0028 deg ~ 300m)
             const dEnd = Math.hypot(end[0] - dCoords[0], end[1] - dCoords[1]);
-            if (dStart > 0.035 || dEnd > 0.035) return false;
+            if (dStart > 0.0028 || dEnd > 0.0028) return false;
 
-            // Strict bounding box with margin (0.025 deg ~ 2.7km)
-            const minLat = Math.min(pCoords[0], dCoords[0]) - 0.025;
-            const maxLat = Math.max(pCoords[0], dCoords[0]) + 0.025;
-            const minLng = Math.min(pCoords[1], dCoords[1]) - 0.025;
-            const maxLng = Math.max(pCoords[1], dCoords[1]) + 0.025;
+            // Strict bounding box with small margin (0.015 deg ~ 1.5km)
+            const minLat = Math.min(pCoords[0], dCoords[0]) - 0.015;
+            const maxLat = Math.max(pCoords[0], dCoords[0]) + 0.015;
+            const minLng = Math.min(pCoords[1], dCoords[1]) - 0.015;
+            const maxLng = Math.max(pCoords[1], dCoords[1]) + 0.015;
 
             for (let i = 0; i < coords.length; i++) {
                 const pt = coords[i];
@@ -1203,13 +1216,13 @@
                 let curLat = lat1 + dLat * f;
                 let curLng = lng1 + dLng * f;
                 if (i === 1) {
-                    curLat += dLat * 0.03;
+                    curLat += dLat * 0.02;
                 } else if (i === 2) {
-                    curLng += dLng * -0.02;
+                    curLng += dLng * -0.015;
                 } else if (i === 3) {
-                    curLat += dLat * -0.02;
+                    curLat += dLat * -0.015;
                 } else if (i === 4) {
-                    curLng += dLng * 0.02;
+                    curLng += dLng * 0.015;
                 }
                 path.push([Number(curLat.toFixed(6)), Number(curLng.toFixed(6))]);
             }
@@ -1224,7 +1237,13 @@
                 const userKey = user ? (user.id || user.phone || user.email || 'guest') : 'guest';
                 const userStorageKey = 'goride_trips_' + String(userKey).toLowerCase().replace(/[^a-z0-9_]/g, '_');
 
-                const cleanKeys = [userStorageKey, 'goride_admin_trips', 'navigo_bookings'];
+                const cleanKeys = [userStorageKey, 'goride_admin_trips', 'navigo_bookings', 'goride_driver_trips'];
+                Object.keys(localStorage).forEach(k => {
+                    if (k.startsWith('goride_trips_') && !cleanKeys.includes(k)) {
+                        cleanKeys.push(k);
+                    }
+                });
+
                 cleanKeys.forEach(key => {
                     const raw = localStorage.getItem(key);
                     if (!raw) return;
@@ -1236,9 +1255,11 @@
                             if (!t) return;
                             const pC = extractPickupCoords(t);
                             const dC = extractDestinationCoords(t);
-                            if (t.routeGeometry && !isRouteGeometryValid(t.routeGeometry, pC, dC)) {
-                                delete t.routeGeometry;
-                                modified = true;
+                            if (t.routeGeometry) {
+                                if (!isRouteGeometryValid(t.routeGeometry, pC, dC)) {
+                                    delete t.routeGeometry;
+                                    modified = true;
+                                }
                             }
                             if (t.distance && Number(t.distance) > 100) {
                                 t.distance = (Number(t.distance) / 1000).toFixed(1);
@@ -1269,12 +1290,9 @@
             if (pCoords[0] > 50 && pCoords[1] < 20) pCoords = [pCoords[1], pCoords[0]];
             if (dCoords[0] > 50 && dCoords[1] < 20) dCoords = [dCoords[1], dCoords[0]];
 
-            // Ensure Leaflet map canvas bounds are up to date
-            try { actMap.invalidateSize(); } catch(e) {}
-
             // Geocode fallback if locations fell back to generic District 1 center or are identical
-            const isPDefault = (Math.abs(pCoords[0] - 10.7769) < 0.001 && Math.abs(pCoords[1] - 106.7009) < 0.001);
-            const isDDefault = (Math.abs(dCoords[0] - 10.7769) < 0.001 && Math.abs(dCoords[1] - 106.7009) < 0.001);
+            const isPDefault = (Math.abs(pCoords[0] - 10.7769) < 0.002 && Math.abs(pCoords[1] - 106.7009) < 0.002);
+            const isDDefault = (Math.abs(dCoords[0] - 10.7769) < 0.002 && Math.abs(dCoords[1] - 106.7009) < 0.002);
             const isSamePoint = (Math.abs(pCoords[0] - dCoords[0]) < 0.0001 && Math.abs(pCoords[1] - dCoords[1]) < 0.0001);
 
             if ((isPDefault || isDDefault || isSamePoint) && typeof geocoderService !== 'undefined' && typeof geocoderService.search === 'function') {
@@ -1298,6 +1316,8 @@
                 }
             }
 
+            // Ensure Leaflet map canvas bounds are up to date
+            try { actMap.invalidateSize(); } catch(e) {}
 
             // 1. Wipe clean all existing layers, lines, and markers on the map
             if (activeRouteLayer) {
@@ -1375,31 +1395,73 @@
                 lineCoordinates = trip.routeGeometry;
             } else {
                 trip.routeGeometry = null;
-                try {
-                    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${pCoords[1]},${pCoords[0]};${dCoords[1]},${dCoords[0]}?overview=full&geometries=geojson`;
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 3500);
-                    const res = await fetch(osrmUrl, { signal: controller.signal });
-                    clearTimeout(timeout);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.routes && data.routes[0] && data.routes[0].geometry) {
-                            const candidate = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-                            if (isRouteGeometryValid(candidate, pCoords, dCoords)) {
-                                lineCoordinates = candidate;
-                                trip.routeGeometry = lineCoordinates;
+                const osrmUrls = [
+                    `https://router.project-osrm.org/route/v1/driving/${pCoords[1]},${pCoords[0]};${dCoords[1]},${dCoords[0]}?overview=full&geometries=geojson`,
+                    `https://routing.openstreetmap.de/routed-car/route/v1/driving/${pCoords[1]},${pCoords[0]};${dCoords[1]},${dCoords[0]}?overview=full&geometries=geojson`
+                ];
+                for (const url of osrmUrls) {
+                    try {
+                        const controller = new AbortController();
+                        const timeout = setTimeout(() => controller.abort(), 3500);
+                        const res = await fetch(url, { signal: controller.signal });
+                        clearTimeout(timeout);
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.routes && data.routes[0] && data.routes[0].geometry && Array.isArray(data.routes[0].geometry.coordinates)) {
+                                const candidate = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                                if (candidate.length >= 2) {
+                                    // Guarantee the route starts seamlessly at pickup pin and ends at destination pin
+                                    if (Math.hypot(candidate[0][0] - pCoords[0], candidate[0][1] - pCoords[1]) > 0.0001) {
+                                        candidate.unshift([pCoords[0], pCoords[1]]);
+                                    } else {
+                                        candidate[0] = [pCoords[0], pCoords[1]];
+                                    }
+                                    if (Math.hypot(candidate[candidate.length - 1][0] - dCoords[0], candidate[candidate.length - 1][1] - dCoords[1]) > 0.0001) {
+                                        candidate.push([dCoords[0], dCoords[1]]);
+                                    } else {
+                                        candidate[candidate.length - 1] = [dCoords[0], dCoords[1]];
+                                    }
+
+                                    if (isRouteGeometryValid(candidate, pCoords, dCoords)) {
+                                        lineCoordinates = candidate;
+                                        trip.routeGeometry = lineCoordinates;
+                                        break;
+                                    }
+                                }
                             }
                         }
+                    } catch (e) {
+                        console.warn('[ActivityMap] OSRM route fetch fallback:', e);
                     }
-                } catch (e) {
-                    console.warn('[ActivityMap] OSRM route fetch fallback:', e);
                 }
             }
 
             // Fallback: direct street route strictly connecting pickup and destination
             if (!lineCoordinates || lineCoordinates.length < 2) {
                 lineCoordinates = generateDirectStreetRoute(pCoords, dCoords);
+                trip.routeGeometry = lineCoordinates;
+            } else {
+                // Double guarantee start & end are identical to pickup and destination pins
+                lineCoordinates[0] = [pCoords[0], pCoords[1]];
+                lineCoordinates[lineCoordinates.length - 1] = [dCoords[0], dCoords[1]];
             }
+
+            // Persist the verified route back to localStorage so subsequent loads are instant and accurate
+            try {
+                if (trip.id) {
+                    const cleanKeys = ['goride_admin_trips', 'navigo_bookings'];
+                    cleanKeys.forEach(k => {
+                        const list = JSON.parse(localStorage.getItem(k) || '[]');
+                        const idx = list.findIndex(t => String(t?.id) === String(trip.id));
+                        if (idx !== -1) {
+                            list[idx].routeGeometry = lineCoordinates;
+                            list[idx].pickupCoords = pCoords;
+                            list[idx].destinationCoords = dCoords;
+                            localStorage.setItem(k, JSON.stringify(list));
+                        }
+                    });
+                }
+            } catch (e) {}
 
             // 5. Draw the single, clean route polyline (Soft Mint Glow + Solid Emerald Line)
             activeRouteLayer = L.featureGroup().addTo(actMap);
@@ -1495,6 +1557,9 @@
             sanitizeStoredTrips();
 
             const user = (typeof sessionManager !== 'undefined') ? sessionManager.getUser() : null;
+            const isAdmin = user && user.role === 'admin';
+            const isDriver = user && user.role === 'driver';
+
             const userKey = user ? (user.id || user.phone || user.email || 'guest') : 'guest';
             const userStorageKey = 'goride_trips_' + String(userKey).toLowerCase().replace(/[^a-z0-9_]/g, '_');
 
@@ -1507,85 +1572,97 @@
             const adminMap = new Map();
             rawAdminList.forEach(t => { if (t && t.id) adminMap.set(String(t.id), t); });
 
-            let combined = [...rawUserList];
-            try {
-                const candidateKeys = new Set();
-                if (user) {
-                    ['id', 'phone', 'email', 'name', 'username'].forEach(prop => {
-                        if (user[prop]) {
-                            const val = String(user[prop]).trim().toLowerCase();
-                            candidateKeys.add('goride_trips_' + val);
-                            candidateKeys.add('goride_trips_' + val.replace(/[^a-z0-9_]/g, '_'));
-                            candidateKeys.add('goride_trips_' + val.replace(/[^a-z0-9_@.-]/gi, '_'));
-                        }
-                    });
+            let combined = [];
+            const tripMap = new Map();
+            const addTrip = (item) => {
+                if (!item || !item.id) return;
+                const id = String(item.id);
+                if (!tripMap.has(id)) {
+                    tripMap.set(id, item);
+                    combined.push(item);
                 }
-                candidateKeys.forEach(k => {
-                    try {
-                        const list = JSON.parse(localStorage.getItem(k) || '[]');
-                        if (Array.isArray(list)) {
-                            list.forEach(item => {
-                                if (item && item.id && !combined.some(u => String(u.id) === String(item.id))) {
-                                    combined.push(item);
-                                }
-                            });
-                        }
-                    } catch (e) {}
-                });
+            };
+
+            if (isAdmin) {
+                // ADMIN: Quản trị viên hệ thống xem TẤT CẢ lịch sử chuyến đi của toàn bộ tài khoản khách
+                rawAdminList.forEach(addTrip);
+                rawBookings.forEach(addTrip);
+                rawDriverTrips.forEach(addTrip);
+                rawUserList.forEach(addTrip);
+
+                // Quét qua mọi goride_trips_* trong localStorage để tập hợp đầy đủ dữ liệu
                 Object.keys(localStorage).forEach(k => {
                     if (k.startsWith('goride_trips_')) {
                         try {
                             const list = JSON.parse(localStorage.getItem(k) || '[]');
-                            if (Array.isArray(list)) {
-                                list.forEach(item => {
-                                    if (!item || !item.id) return;
-                                    const matchUser = user && (
-                                        (user.id && (String(item.userId) === String(user.id) || String(item.customerId) === String(user.id))) ||
-                                        (user.phone && (item.customerPhone === user.phone || item.phone === user.phone)) ||
-                                        (user.email && (item.customerEmail === user.email || item.email === user.email)) ||
-                                        (user.name && (item.customerName === user.name || item.name === user.name))
-                                    );
-                                    if (matchUser && !combined.some(u => String(u.id) === String(item.id))) {
-                                        combined.push(item);
-                                    }
-                                });
-                            }
+                            if (Array.isArray(list)) list.forEach(addTrip);
                         } catch (e) {}
                     }
                 });
-            } catch (e) {}
+            } else if (isDriver) {
+                // DRIVER: Đối tác tài xế chỉ xem các chuyến của chính tài xế đó
+                const dId = String(user?.id || '').trim().toLowerCase();
+                const dPhone = String(user?.phone || '').replace(/\D/g, '');
+                const dEmail = String(user?.email || '').trim().toLowerCase();
 
-            rawAdminList.forEach(at => {
-                if (!combined.some(u => String(u.id) === String(at.id))) {
-                    if (user && (user.role === 'admin' || at.customerId === user.id || at.userId === user.id || at.customerPhone === user.phone || at.customerEmail === user.email || at.customerName === user.name || (user.role === 'driver' && (at.driverId === user.id || at.driverPhone === user.phone || at.driverName === user.name)))) {
-                        combined.push(at);
+                const isMyDriverTrip = (t) => {
+                    if (!t) return false;
+                    const idMatch = dId && String(t.driverId || t.driver_id || '').trim().toLowerCase() === dId;
+                    const phoneMatch = dPhone && String(t.driverPhone || t.phone || '').replace(/\D/g, '') === dPhone;
+                    const emailMatch = dEmail && String(t.driverEmail || t.email || '').trim().toLowerCase() === dEmail;
+                    return idMatch || phoneMatch || emailMatch;
+                };
+
+                rawDriverTrips.filter(isMyDriverTrip).forEach(addTrip);
+                rawAdminList.filter(isMyDriverTrip).forEach(addTrip);
+                rawBookings.filter(isMyDriverTrip).forEach(addTrip);
+            } else {
+                // CUSTOMER: TÀI KHOẢN KHÁCH HÀNG — CHỈ HIỂN THỊ CHUYẾN ĐI CỦA ĐÚNG TÀI KHOẢN ĐÓ
+                const uid = String(user?.id || '').trim().toLowerCase();
+                const uPhone = String(user?.phone || '').replace(/\D/g, '');
+                const uEmail = String(user?.email || '').trim().toLowerCase();
+
+                const isMyCustomerTrip = (t) => {
+                    if (!t) return false;
+                    const tCustId = String(t.customerId || t.userId || '').trim().toLowerCase();
+                    const tPhone = String(t.customerPhone || t.phone || '').replace(/\D/g, '');
+                    const tEmail = String(t.customerEmail || t.email || '').trim().toLowerCase();
+
+                    const idMatch = uid && tCustId && (tCustId === uid);
+                    const phoneMatch = uPhone && tPhone && (tPhone === uPhone);
+                    const emailMatch = uEmail && tEmail && (tEmail === uEmail);
+
+                    return idMatch || phoneMatch || emailMatch;
+                };
+
+                // Chỉ lấy những chuyến thực sự của khách hàng này
+                rawUserList.filter(isMyCustomerTrip).forEach(addTrip);
+                rawAdminList.filter(isMyCustomerTrip).forEach(addTrip);
+                rawBookings.filter(isMyCustomerTrip).forEach(addTrip);
+
+                // Quét candidate keys riêng của tài khoản khách này
+                const candidateKeys = new Set();
+                ['id', 'phone', 'email', 'name', 'username'].forEach(prop => {
+                    if (user && user[prop]) {
+                        const val = String(user[prop]).trim().toLowerCase();
+                        candidateKeys.add('goride_trips_' + val);
+                        candidateKeys.add('goride_trips_' + val.replace(/[^a-z0-9_]/g, '_'));
                     }
-                }
-            });
-
-            rawBookings.forEach(b => {
-                if (!combined.some(u => String(u.id) === String(b.id))) combined.push(b);
-            });
-            if (user && user.role === 'driver') {
-                rawDriverTrips.forEach(dt => {
-                    if (!combined.some(u => String(u.id) === String(dt.id))) combined.push(dt);
+                });
+                candidateKeys.forEach(k => {
+                    try {
+                        const list = JSON.parse(localStorage.getItem(k) || '[]');
+                        if (Array.isArray(list)) list.filter(isMyCustomerTrip).forEach(addTrip);
+                    } catch (e) {}
                 });
             }
-            /*
-            });
-            if (user && user.role === 'driver') {
-                rawDriverTrips.forEach(dt => {
-                    if (!combined.some(u => String(u.id) === String(dt.id))) combined.push(dt);
-                });
-            });
 
-            */
-            // If user has no saved history or demo mode is on, fallback to authentic demo trips
-            if (combined.length === 0 || showTripsMode) {
-                combined = [...combined, ...demoTrips];
+            // Chỉ hiển thị demo trips khi có yêu cầu tường minh (?demo=1) hoặc bấm nút lịch
+            if (showTripsMode || window.location.search.includes('demo=1')) {
+                demoTrips.forEach(addTrip);
             }
 
-            // Strictly sort all trips by time descending (newest trips first)
+            // Sắp xếp chuyến đi theo thời gian giảm dần (chuyến mới nhất lên đầu)
             combined.sort((a, b) => getTripTimestamp(b) - getTripTimestamp(a));
 
             return combined.map(t => {
@@ -1614,7 +1691,7 @@
 
                 return {
                     id: t.id || 'NAV-' + Math.floor(10000 + Math.random() * 90000),
-                    type: (t.vehicleType === 'bike') ? 'bike' : 'car',
+                    type: (t.vehicleType === 'bike' || t.vehicleType === 'motorbike' || String(t.vehicleType || '').toLowerCase().includes('bike') || String(t.vehicleModel || '').toLowerCase().includes('bike')) ? 'bike' : 'car',
                     title: t.vehicleName || t.vehicleTypeName || adminData.vehicleTypeName || 'Green Car - 4 khách',
                     time: (() => {
                         const ts = getTripTimestamp(t);

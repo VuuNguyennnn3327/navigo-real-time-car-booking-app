@@ -1105,8 +1105,8 @@
                     adminDrivers.push({
                         id: user.id || ('drv_' + Date.now()),
                         name: user.name || 'Tài xế Navigo',
-                        phone: user.phone || '0918765432',
-                        email: user.email || 'driver@navigo.vn',
+                        phone: user.phone || '',
+                        email: user.email || '',
                         vehicleType: vType,
                         vehicle: updatedVehicle,
                         plate: plateVal,
@@ -1222,12 +1222,23 @@
             };
 
             if (typeof realtimeSync !== 'undefined' && typeof realtimeSync.getCounterpartyRating === 'function') {
-                ratingInfo = realtimeSync.getCounterpartyRating(user.id || user.phone, role);
+                ratingInfo = realtimeSync.getCounterpartyRating(user.id || user.phone, role, user.phone);
             } else {
                 try {
                     const targetRole = isDriver ? 'driver' : 'customer';
+                    const targetId = user.id ? String(user.id) : '';
+                    const targetPhone = user.phone ? String(user.phone).replace(/\D/g, '') : '';
                     const history = JSON.parse(localStorage.getItem('navigo_ratings_history') || '[]');
-                    const matched = history.filter(h => h.toRole === targetRole);
+                    const matched = history.filter(h => {
+                        if (!h || h.toRole !== targetRole) return false;
+                        if (!targetId && !targetPhone) return false;
+                        if (targetId && (h.toUserId === targetId || h.toUserPhone === targetId)) return true;
+                        if (targetPhone && h.toUserPhone) {
+                            const hp = String(h.toUserPhone).replace(/\D/g, '');
+                            if (hp && (hp === targetPhone || hp.endsWith(targetPhone) || targetPhone.endsWith(hp))) return true;
+                        }
+                        return false;
+                    });
                     if (matched.length > 0) {
                         let sum = 0;
                         matched.forEach(m => sum += Number(m.rating || 5));
@@ -1235,8 +1246,9 @@
                         ratingInfo.count = matched.length;
                         ratingInfo.reviews = matched.slice(0, 5);
                     } else {
-                        ratingInfo.average = Number(user.rating || 5.0);
-                        ratingInfo.count = user.ratingCount || 1;
+                        ratingInfo.average = 5.0;
+                        ratingInfo.count = 0;
+                        ratingInfo.reviews = [];
                     }
                 } catch (e) {}
             }

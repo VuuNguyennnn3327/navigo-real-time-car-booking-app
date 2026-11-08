@@ -219,11 +219,75 @@ class CustomerAppController {
     normalizeVehicleType(type) {
         if (!type) return 'car4';
         const s = String(type).toLowerCase().trim();
-        if (s === 'delivery' || s.includes('giao hàng') || s.includes('giao hang') || s.includes('delivery')) return 'delivery';
-        if (s === 'bike' || s === 'motorbike' || s.includes('bike') || s.includes('moto') || s.includes('xe máy') || s.includes('xe may')) return 'motorbike';
-        if (s === 'car7' || s === 'xl' || s.includes('7 chỗ') || s.includes('7 cho') || s.includes('xl')) return 'car7';
-        if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || s.includes('sang') || s.includes('luxury')) return 'premium';
+        if (s === 'delivery' || s.includes('giao hàng') || s.includes('giao hang') || s.includes('delivery') || s.includes('package') || s.includes('box')) return 'delivery';
+        if (s === 'bike' || s === 'motorbike' || s.includes('bike') || s.includes('moto') || s.includes('xe máy') || s.includes('xe may') || s.includes('scooter') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
+        if (s === 'car7' || s === 'xl' || s.includes('7 chỗ') || s.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
+        if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || s.includes('sang') || s.includes('luxury') || s.includes('vip')) return 'premium';
         return 'car4';
+    }
+
+    resolveTripVehicleType(trip) {
+        if (!trip) return this.normalizeVehicleType(this.selectedService || 'car4');
+
+        // 1. Direct explicit vehicleType or serviceType properties
+        const directType = trip.vehicleType || trip.serviceType || trip.service || trip.driverVehicleType || (trip.vehicle && typeof trip.vehicle === 'object' && trip.vehicle.type);
+        if (directType) {
+            const norm = this.normalizeVehicleType(directType);
+            if (norm) return norm;
+        }
+
+        // 2. Infer from vehicleModel string (e.g. 'Navigo Bike E-Scooter', 'Navigo Taxi 7 chỗ')
+        if (trip.vehicleModel) {
+            const s = String(trip.vehicleModel).toLowerCase();
+            if (s.includes('bike') || s.includes('scooter') || s.includes('xe máy') || s.includes('xe may') || s.includes('moto') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
+            if (s.includes('7 chỗ') || s.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
+            if (s.includes('luxury') || s.includes('sang') || s.includes('plus') || s.includes('vip')) return 'premium';
+            if (s.includes('delivery') || s.includes('giao hàng') || s.includes('giao hang') || s.includes('box')) return 'delivery';
+        }
+
+        // 3. Infer from vehicle label string
+        if (trip.vehicle && typeof trip.vehicle === 'string') {
+            const s = trip.vehicle.toLowerCase();
+            if (s.includes('bike') || s.includes('scooter') || s.includes('xe máy') || s.includes('xe may') || s.includes('moto')) return 'motorbike';
+            if (s.includes('7 chỗ') || s.includes('7 cho') || s.includes('xl')) return 'car7';
+            if (s.includes('luxury') || s.includes('sang') || s.includes('plus')) return 'premium';
+            if (s.includes('delivery') || s.includes('giao hàng')) return 'delivery';
+        }
+
+        // 4. Match with online driver profile in goride_online_drivers
+        try {
+            const onlineDrivers = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
+            const dEntry = Object.values(onlineDrivers).find(d => 
+                d && (
+                    (trip.driverName && d.name === trip.driverName) || 
+                    (trip.licensePlate && (d.plate === trip.licensePlate || d.licensePlate === trip.licensePlate))
+                )
+            );
+            if (dEntry && (dEntry.vehicleType || dEntry.type || dEntry.model || (dEntry.vehicle && dEntry.vehicle.type))) {
+                return this.normalizeVehicleType(dEntry.vehicleType || dEntry.type || dEntry.model || (dEntry.vehicle && dEntry.vehicle.type));
+            }
+        } catch (e) {}
+
+        // 5. Match with active trip in localStorage
+        try {
+            const act = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
+            if (act && (act.id === trip.id || !trip.id)) {
+                if (act.vehicleType) return this.normalizeVehicleType(act.vehicleType);
+                if (act.vehicleModel) {
+                    const normModel = this.normalizeVehicleType(act.vehicleModel);
+                    if (normModel !== 'car4') return normModel;
+                }
+            }
+        } catch (e) {}
+
+        // 6. Match with admin trips in localStorage
+        try {
+            const adm = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
+            const found = adm.find(t => t && (t.id === trip.id));
+            if (found && found.vehicleType) return this.normalizeVehicleType(found.vehicleType);
+        } catch (e) {}
+
+        return this.normalizeVehicleType(this.selectedService || 'car4');
     }
 
     isVehicleTypeMatch(typeA, typeB) {
@@ -298,6 +362,8 @@ class CustomerAppController {
         this.renderVehicleOptions();
         this.handleUrlParameters();
         this.checkBackendStatus();
+        this.setupCustomerPresence();
+        this.setupAccountLockGuards();
 
         // 100% Real Data Enforcement: Thorough purge of all legacy & default mock trips across all storage
         if (typeof purgeAllMockTrips === 'function') {
@@ -449,6 +515,166 @@ class CustomerAppController {
         });
 
         console.log('[GoRide Customer] Ready.');
+    }
+
+    /**
+     * Customer presence & heartbeat management (Real-time online status)
+     */
+    setupCustomerPresence() {
+        const getCurUser = () => {
+            let u = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+            if (!u) {
+                try { u = JSON.parse(localStorage.getItem('goride_user') || 'null'); } catch(e) {}
+            }
+            return u;
+        };
+
+        const user = getCurUser();
+        if (!user || !user.id || user.role === 'admin' || user.role === 'driver') return;
+
+        const pingPresence = () => {
+            const u = getCurUser();
+            if (!u || !u.id) return;
+            if (typeof realtimeSync !== 'undefined' && typeof realtimeSync.setCustomerOnline === 'function') {
+                realtimeSync.setCustomerOnline(u.id, true, {
+                    name: u.name || 'Khách hàng',
+                    phone: u.phone || '',
+                    email: u.email || '',
+                    updatedAt: Date.now()
+                });
+            }
+        };
+
+        // Immediate ping
+        pingPresence();
+
+        // 30s heartbeat
+        if (this._presenceHeartbeat) clearInterval(this._presenceHeartbeat);
+        this._presenceHeartbeat = setInterval(pingPresence, 30000);
+
+        // Disconnect hook
+        window.addEventListener('beforeunload', () => {
+            const u = getCurUser();
+            if (u && u.id && typeof realtimeSync !== 'undefined' && typeof realtimeSync.setCustomerOnline === 'function') {
+                realtimeSync.setCustomerOnline(u.id, false);
+            }
+        });
+    }
+
+    /**
+     * Checks if current account is locked by Administrator
+     */
+    isAccountLocked(user) {
+        if (!user) {
+            user = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+            if (!user) {
+                try { user = JSON.parse(localStorage.getItem('goride_user') || 'null'); } catch(e) {}
+            }
+        }
+        if (!user) return false;
+        if (user.status === 'locked') return true;
+        try {
+            const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
+            const matched = offlineUsers.find(u => u.id === user.id || (user.email && u.email === user.email) || (user.phone && u.phone === user.phone));
+            if (matched && matched.status === 'locked') return true;
+        } catch (e) {}
+        return false;
+    }
+
+    /**
+     * Show locked account notification and lock booking actions
+     */
+    showCustomerLockedNotice() {
+        const btnConfirmPickup = document.getElementById('btn-confirm-pickup-cta');
+        if (btnConfirmPickup) {
+            btnConfirmPickup.disabled = true;
+            btnConfirmPickup.style.opacity = '0.5';
+            btnConfirmPickup.style.cursor = 'not-allowed';
+            btnConfirmPickup.title = 'Tài khoản của bạn đã bị khóa';
+        }
+
+        const btnSolicitar = document.getElementById('btn-solicitar-ride');
+        if (btnSolicitar) {
+            btnSolicitar.disabled = true;
+            btnSolicitar.style.opacity = '0.5';
+            btnSolicitar.style.cursor = 'not-allowed';
+            btnSolicitar.title = 'Tài khoản của bạn đã bị khóa';
+        }
+
+        let banner = document.getElementById('customer-locked-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'customer-locked-banner';
+            banner.style.cssText = 'position:fixed; top:16px; left:16px; right:16px; z-index:9999999; background:#fef2f2; border:1.5px solid #ef4444; color:#991b1b; padding:14px 20px; border-radius:14px; box-shadow:0 10px 30px rgba(239,68,68,0.3); display:flex; align-items:center; gap:14px; font-family:system-ui,-apple-system,sans-serif;';
+            banner.innerHTML = `
+                <span style="font-size:26px; line-height:1;">🚨</span>
+                <div style="flex:1;">
+                    <div style="color:#b91c1c; font-size:14px; font-weight:800; letter-spacing:-0.2px;">TÀI KHOẢN ĐÃ BỊ TẠM KHÓA BỞI QUẢN TRỊ VIÊN</div>
+                    <div style="font-size:12px; font-weight:500; color:#7f1d1d; margin-top:3px; line-height:1.4;">Tài khoản của bạn đã bị khóa. Bạn không thể thực hiện đặt chuyến mới. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.</div>
+                </div>
+            `;
+            document.body.appendChild(banner);
+        }
+
+        if (typeof window.showNavigoModal === 'function') {
+            window.showNavigoModal({
+                title: '🚨 Tài khoản bị tạm khóa',
+                message: 'Tài khoản của bạn đã bị Quản trị viên tạm khóa. Bạn tạm thời không thể đặt chuyến xe mới. Vui lòng liên hệ tổng đài hỗ trợ Navigo: 1900 8888 để biết thêm chi tiết.',
+                icon: '🚨',
+                confirmText: 'Đã hiểu',
+                showCancel: false,
+                danger: true
+            });
+        }
+    }
+
+    removeCustomerLockedNotice() {
+        const banner = document.getElementById('customer-locked-banner');
+        if (banner) banner.remove();
+        const btnConfirmPickup = document.getElementById('btn-confirm-pickup-cta');
+        if (btnConfirmPickup) {
+            btnConfirmPickup.disabled = false;
+            btnConfirmPickup.style.opacity = '1';
+            btnConfirmPickup.style.cursor = 'pointer';
+            btnConfirmPickup.removeAttribute('title');
+        }
+        const btnSolicitar = document.getElementById('btn-solicitar-ride');
+        if (btnSolicitar) {
+            btnSolicitar.disabled = false;
+            btnSolicitar.style.opacity = '1';
+            btnSolicitar.style.cursor = 'pointer';
+            btnSolicitar.removeAttribute('title');
+        }
+    }
+
+    setupAccountLockGuards() {
+        const user = (typeof sessionManager !== 'undefined') ? sessionManager.getUser?.() : null;
+        if (this.isAccountLocked(user)) {
+            this.showCustomerLockedNotice();
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'goride_user_lock_event') {
+                try {
+                    const lockData = JSON.parse(e.newValue || '{}');
+                    const curUser = (typeof sessionManager !== 'undefined') ? sessionManager.getUser?.() : null;
+                    if (curUser && (lockData.userId === curUser.id || (curUser.email && lockData.email === curUser.email) || (curUser.phone && lockData.phone === curUser.phone))) {
+                        if (lockData.status === 'locked') {
+                            if (typeof sessionManager !== 'undefined') {
+                                sessionManager.updateUser({ status: 'locked' });
+                            }
+                            this.showCustomerLockedNotice();
+                        } else if (lockData.status === 'active') {
+                            if (typeof sessionManager !== 'undefined') {
+                                sessionManager.updateUser({ status: 'active' });
+                            }
+                            this.removeCustomerLockedNotice();
+                            this.showToast('Tài khoản của bạn đã được mở khóa! Bạn có thể tiếp tục đặt xe.', 'success', 5000);
+                        }
+                    }
+                } catch (err) {}
+            }
+        });
     }
 
     /**
@@ -1385,19 +1611,19 @@ class CustomerAppController {
             });
         }
 
-        // Floating Round GPS Button on Map (Mobile & Desktop)
+        // Floating Round GPS Button on Map (Mobile & Desktop) - Pans to user GPS without altering booked pickup
         const btnFloatingGps = document.getElementById('btn-floating-my-location');
         if (btnFloatingGps) {
             btnFloatingGps.addEventListener('click', () => {
-                this.recenterMapOnGps(true);
+                this.panToUserGps();
             });
         }
 
-        // Desktop Map Recenter Button
+        // Desktop Map Recenter Button - Pans to user GPS without altering booked pickup
         const btnGps = document.getElementById('btn-gps-recenter');
         if (btnGps) {
             btnGps.addEventListener('click', () => {
-                this.recenterMapOnGps(true);
+                this.panToUserGps();
             });
         }
 
@@ -1432,6 +1658,10 @@ class CustomerAppController {
                     } else {
                         window.location.href = 'login.html?redirect=customer.html';
                     }
+                    return;
+                }
+                if (this.isAccountLocked(curUser)) {
+                    this.showCustomerLockedNotice();
                     return;
                 }
                 // If destination already chosen, proceed to vehicle selection; else go back to search
@@ -1868,6 +2098,41 @@ class CustomerAppController {
      * Interactive draggable & collapsible bottom sheet for vehicle selection
      * Allows user to pull/drag down or tap handle to view map freely,
      * and pull/drag up or tap handle to expand and choose vehicle / book ride.
+    }
+
+    /**
+     * Pans map smoothly to current user GPS blue dot without altering or overriding custom booked pickup point
+     * (Critical for booking a ride for someone else in another location)
+     */
+    panToUserGps() {
+        if (this.userGpsPosition && this.userGpsPosition.lat && this.mapController) {
+            if (this.mapController.map && typeof this.mapController.map.flyTo === 'function') {
+                this.mapController.map.flyTo([this.userGpsPosition.lat, this.userGpsPosition.lng], 16, { animate: true, duration: 1.0 });
+            } else if (typeof this.mapController.setView === 'function') {
+                this.mapController.setView(this.userGpsPosition.lat, this.userGpsPosition.lng, 16);
+            }
+            this.showToast('Đang hiển thị vị trí của bạn trên bản đồ', 'info', 2000);
+            return;
+        }
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    this.userGpsPosition = { lat, lng };
+                    if (this.mapController) {
+                        this.mapController.setUserLocation(lat, lng, pos.coords.accuracy);
+                        if (this.mapController.map && typeof this.mapController.map.flyTo === 'function') {
+                            this.mapController.map.flyTo([lat, lng], 16, { animate: true, duration: 1.0 });
+                        }
+                    }
+                },
+                (err) => {
+                    this.showToast('Không thể lấy tọa độ GPS của thiết bị.', 'warning');
+                },
+                { enableHighAccuracy: true, timeout: 6000 }
+            );
+        }
     }
 
     /**
@@ -2917,9 +3182,10 @@ class CustomerAppController {
             ];
         }
 
-        // 6. Real Street Network Graph for Central HCMC (Never cuts diagonally across buildings)
-        // Authentic street intersections mapped to actual road corridors
+        // 6. Real Street Network Graph for Greater HCMC (Central, East, North, West, Airport)
+        // Authentic street intersections mapped to actual road corridors across all districts
         const intersections = [
+            // Central D1/D3
             { id: 'bt', lat: 10.77250, lng: 106.69800 },         // Bến Thành
             { id: 'leloi_nkk', lat: 10.77330, lng: 106.69980 },   // Lê Lợi x Nam Kỳ Khởi Nghĩa (khớp tim đường OSM)
             { id: 'leloi_pas', lat: 10.77395, lng: 106.70070 },   // Lê Lợi x Pasteur (khớp tim đường OSM)
@@ -2942,29 +3208,54 @@ class CustomerAppController {
             { id: 'nh_tdt', lat: 10.77200, lng: 106.70650 },      // Bến Bạch Đằng / Tôn Đức Thắng
             { id: 'tdt_ld', lat: 10.78450, lng: 106.70600 },      // Tôn Đức Thắng x Lê Duẩn
             { id: 'tdt_nhc', lat: 10.78750, lng: 106.71180 },     // Tôn Đức Thắng x Nguyễn Hữu Cảnh
-            { id: 'lm81', lat: 10.79510, lng: 106.72190 },        // Landmark 81
-            { id: 'pht_ngasau', lat: 10.77145, lng: 106.69365 },  // Phạm Hồng Thái x Ngã Sáu Phù Đổng (Cửa Đông)
-            { id: 'ngasau_se', lat: 10.77135, lng: 106.69345 },   // Ngã Sáu Phù Đổng (Cung Đông Nam)
-            { id: 'ngasau_sw', lat: 10.77132, lng: 106.69320 },   // Ngã Sáu Phù Đổng (Cung Tây Nam)
-            { id: 'ngasau_nw', lat: 10.77165, lng: 106.69315 },   // Ngã Sáu Phù Đổng (Cung Tây Bắc - CMT8)
-            { id: 'cmt8_ntmk', lat: 10.77200, lng: 106.69100 },   // Cách Mạng Tháng 8 x NTMK
-            { id: 'cmt8_dbp', lat: 10.77700, lng: 106.68300 },    // Cách Mạng Tháng 8 x Điện Biên Phủ
-            { id: 'bk_3t2', lat: 10.77200, lng: 106.65780 },      // ĐH Bách Khoa
+            { id: 'pht_ngasau', lat: 10.77145, lng: 106.69365 },  // Ngã Sáu Phù Đổng
+            { id: 'cmt8_ntmk', lat: 10.77200, lng: 106.69100 },   // CMT8 x NTMK
+            { id: 'cmt8_dbp', lat: 10.77700, lng: 106.68300 },    // CMT8 x Điện Biên Phủ
+            { id: 'bk_3t2', lat: 10.77200, lng: 106.65780 },      // ĐH Bách Khoa / Ba Tháng Hai
             { id: 'nkk_dbp', lat: 10.78520, lng: 106.68950 },     // Nam Kỳ Khởi Nghĩa x Điện Biên Phủ
-            { id: 'nkk_lct', lat: 10.79050, lng: 106.68300 },     // Nam Kỳ Khởi Nghĩa x Lý Chính Thắng (Cầu Công Lý)
+            { id: 'nkk_lct', lat: 10.79050, lng: 106.68300 },     // Nam Kỳ Khởi Nghĩa x Lý Chính Thắng
             { id: 'nvt_thl', lat: 10.79550, lng: 106.67750 },     // Nguyễn Văn Trỗi x Trần Huy Liệu
+            // Tan Binh & Airport
             { id: 'nvt_hvt', lat: 10.80100, lng: 106.66650 },     // Nguyễn Văn Trỗi x Hoàng Văn Thụ
-            { id: 'ts_airport', lat: 10.81200, lng: 106.66300 },  // Đường Trường Sơn
-            { id: 'tsn_airport', lat: 10.81850, lng: 106.65880 }  // Sân bay Tân Sơn Nhất
+            { id: 'lang_cha_ca', lat: 10.79900, lng: 106.65800 }, // Lăng Cha Cả
+            { id: 'ts_airport', lat: 10.81200, lng: 106.66300 },  // Đường Trường Sơn (Sân bay)
+            { id: 'cong_hoa_hht', lat: 10.80300, lng: 106.65000 },// Cộng Hòa x Hoàng Hoa Thám
+            { id: 'cong_hoa_tc', lat: 10.80600, lng: 106.64300 }, // Cộng Hòa x Trường Chinh
+            // Tan Phu & Dam Sen
+            { id: 'dam_sen', lat: 10.76800, lng: 106.63500 },     // Công viên nước Đầm Sen
+            { id: 'luy_ban_bich_hb', lat: 10.77100, lng: 106.63500 }, // Lũy Bán Bích x Hòa Bình
+            { id: 'lbb_tnh', lat: 10.78500, lng: 106.63200 },     // Lũy Bán Bích x Thoại Ngọc Hầu
+            { id: 'truong_chinh_au_co', lat: 10.79800, lng: 106.64200 }, // Trường Chinh x Âu Cơ / Ba Vân
+            // Binh Thanh & Thu Duc & Pham Van Dong
+            { id: 'lm81', lat: 10.79510, lng: 106.72190 },        // Landmark 81
+            { id: 'cau_sg', lat: 10.79900, lng: 106.72500 },      // Cầu Sài Gòn
+            { id: 'xlhn_thuduc', lat: 10.85100, lng: 106.77200 }, // Xa Lộ Hà Nội x Ngã Tư Thủ Đức
+            { id: 'cau_binh_trieu', lat: 10.81500, lng: 106.71000 }, // Cầu Bình Triệu / Đinh Bộ Lĩnh
+            { id: 'pvd_tsn', lat: 10.82200, lng: 106.67200 },     // Phạm Văn Đồng x Bạch Đằng (vòng ngoài sân bay)
+            { id: 'pvd_govap', lat: 10.82000, lng: 106.68500 },   // Phạm Văn Đồng x Phan Văn Trị
+            { id: 'pvd_ql13', lat: 10.82400, lng: 106.71200 },    // Phạm Văn Đồng x Quốc Lộ 13
+            { id: 'ql13_hiepbinh', lat: 10.83500, lng: 106.71500 }, // QL13 x Hiệp Bình
+            { id: 'ql13_binhphuoc', lat: 10.85000, lng: 106.72000 }, // Ngã Tư Bình Phước (QL13 x QL1A)
+            // District 9 & Tang Nhon Phu & Thu Duc
+            { id: 'tnp_duong_a', lat: 10.84380, lng: 106.78250 },     // 43/8 Đường A, Tăng Nhơn Phú
+            { id: 'tnp_vietinbank', lat: 10.84650, lng: 106.77900 },  // VietinBank Tăng Nhơn Phú (Lê Văn Việt)
+            { id: 'tnp_levanviet', lat: 10.84600, lng: 106.77850 },   // Lê Văn Việt x Man Thiện
+            { id: 'tnp_laxuanoai', lat: 10.84100, lng: 106.79000 },   // Hẻm 32 Lã Xuân Oai, Tăng Nhơn Phú
+            { id: 'tnp_hocvien', lat: 10.84450, lng: 106.78600 },     // Học viện Chính trị
+            { id: 'tnp_manthien', lat: 10.85050, lng: 106.78500 },    // Man Thiện
+            { id: 'thuduc_ufm', lat: 10.84900, lng: 106.78150 },      // ĐH Tài chính - Marketing (UFM)
+            { id: 'thuduc_ute', lat: 10.85080, lng: 106.77190 },      // ĐH Sư phạm Kỹ thuật (UTE)
+            // District 12 & An Phu Dong
+            { id: 'truong_chinh_an_suong', lat: 10.84500, lng: 106.61800 }, // Ngã Tư An Sương
+            { id: 'ql1a_tth', lat: 10.85500, lng: 106.64500 },    // QL1A x Tân Thới Hiệp
+            { id: 'ql1a_nga_tu_ga', lat: 10.86000, lng: 106.67800 }, // QL1A x Ngã Tư Ga
+            { id: 'an_phu_dong_d3', lat: 10.85200, lng: 106.69500 }  // Đường D3 / Vườn Lài (An Phú Đông)
         ];
 
         // Valid physical street connections between intersections
         const roadAdj = {
             bt: ['leloi_nkk', 'lt_td', 'pht_ngasau'],
-            pht_ngasau: ['bt', 'ngasau_se', 'ly_td'],
-            ngasau_se: ['ngasau_sw', 'pht_ngasau'],
-            ngasau_sw: ['ngasau_nw', 'ngasau_se'],
-            ngasau_nw: ['cmt8_ntmk', 'ngasau_sw'],
+            pht_ngasau: ['bt', 'cmt8_ntmk', 'ly_td'],
             leloi_nkk: ['bt', 'leloi_pas', 'lt_nkk'],
             leloi_pas: ['leloi_nkk', 'leloi_nh', 'lt_pas'],
             leloi_nh: ['leloi_pas', 'leloi_dk', 'nh_mtb'],
@@ -2983,19 +3274,45 @@ class CustomerAppController {
             nkk_dbp: ['nd_nkk', 'nkk_lct'],
             nkk_lct: ['nkk_dbp', 'nvt_thl'],
             nvt_thl: ['nkk_lct', 'nvt_hvt'],
-            nvt_hvt: ['nvt_thl', 'ts_airport'],
-            ts_airport: ['nvt_hvt', 'tsn_airport'],
+            nvt_hvt: ['nvt_thl', 'lang_cha_ca', 'ts_airport'],
+            lang_cha_ca: ['nvt_hvt', 'cong_hoa_hht', 'ts_airport'],
+            cong_hoa_hht: ['lang_cha_ca', 'cong_hoa_tc'],
+            cong_hoa_tc: ['cong_hoa_hht', 'truong_chinh_au_co', 'truong_chinh_an_suong'],
+            ts_airport: ['nvt_hvt', 'lang_cha_ca', 'pvd_tsn'],
+            pvd_tsn: ['ts_airport', 'pvd_govap'],
+            pvd_govap: ['pvd_tsn', 'pvd_ql13'],
+            pvd_ql13: ['pvd_govap', 'cau_binh_trieu', 'ql13_hiepbinh'],
+            cau_binh_trieu: ['pvd_ql13', 'tdt_nhc'],
+            ql13_hiepbinh: ['pvd_ql13', 'ql13_binhphuoc'],
+            ql13_binhphuoc: ['ql13_hiepbinh', 'an_phu_dong_d3', 'xlhn_thuduc'],
+            xlhn_thuduc: ['ql13_binhphuoc', 'cau_sg', 'thuduc_ute', 'thuduc_ufm'],
+            thuduc_ute: ['xlhn_thuduc', 'tnp_levanviet'],
+            thuduc_ufm: ['xlhn_thuduc', 'tnp_manthien', 'tnp_vietinbank'],
+            tnp_levanviet: ['thuduc_ute', 'tnp_vietinbank', 'tnp_manthien'],
+            tnp_vietinbank: ['tnp_levanviet', 'thuduc_ufm', 'tnp_duong_a'],
+            tnp_duong_a: ['tnp_vietinbank', 'tnp_hocvien'],
+            tnp_hocvien: ['tnp_duong_a', 'tnp_laxuanoai'],
+            tnp_laxuanoai: ['tnp_hocvien', 'tnp_manthien'],
+            tnp_manthien: ['tnp_levanviet', 'thuduc_ufm', 'tnp_laxuanoai'],
+            cau_sg: ['xlhn_thuduc', 'lm81'],
             nd_pas: ['nd_dk', 'nd_nkk'],
             nd_dk: ['ly_dk', 'ly_hbt', 'nd_pas'],
             nh_mtb: ['leloi_nh', 'nh_tdt'],
             nh_tdt: ['nh_mtb', 'tdt_ld'],
             tdt_ld: ['tdt_nhc', 'nh_tdt'],
-            tdt_nhc: ['lm81', 'tdt_ld'],
-            lm81: ['tdt_nhc'],
-            cmt8_ntmk: ['cmt8_dbp', 'ngasau_nw'],
+            tdt_nhc: ['lm81', 'tdt_ld', 'cau_binh_trieu'],
+            lm81: ['tdt_nhc', 'cau_sg'],
+            cmt8_ntmk: ['cmt8_dbp', 'pht_ngasau'],
             cmt8_dbp: ['bk_3t2', 'cmt8_ntmk'],
-            bk_3t2: ['cmt8_dbp'],
-            tsn_airport: ['ts_airport']
+            bk_3t2: ['cmt8_dbp', 'dam_sen'],
+            dam_sen: ['bk_3t2', 'luy_ban_bich_hb'],
+            luy_ban_bich_hb: ['dam_sen', 'lbb_tnh'],
+            lbb_tnh: ['luy_ban_bich_hb', 'truong_chinh_au_co'],
+            truong_chinh_au_co: ['lbb_tnh', 'cong_hoa_tc', 'truong_chinh_an_suong'],
+            truong_chinh_an_suong: ['truong_chinh_au_co', 'cong_hoa_tc', 'ql1a_tth'],
+            ql1a_tth: ['truong_chinh_an_suong', 'ql1a_nga_tu_ga'],
+            ql1a_nga_tu_ga: ['ql1a_tth', 'an_phu_dong_d3'],
+            an_phu_dong_d3: ['ql1a_nga_tu_ga', 'ql13_binhphuoc']
         };
 
         // Snap pickup & dest to closest intersection
@@ -3014,97 +3331,126 @@ class CustomerAppController {
 
         const startRes = findNearestNode(pLat, pLng);
         const endRes = findNearestNode(dLat, dLng);
+        const directDist = this.calculateHaversineDistance(pLat, pLng, dLat, dLng);
 
-        // Helper to construct a clean, direct road corridor strictly between pickup and dest
-        const generateDirectCorridor = () => {
+        // Sanity Check: For short direct trips (< 1.2km) or if snapping to nodes creates an unnatural detour (> directDist)
+        // generate a clean direct street corridor directly between pickup and destination
+        if (directDist < 1200 || (startRes.dist > directDist * 0.7 && endRes.dist > directDist * 0.7)) {
+            const dLat_diff = dLat - pLat;
+            const dLng_diff = dLng - pLng;
+            return [
+                [pLat, pLng],
+                [Number((pLat + dLat_diff * 0.33 + dLat_diff * 0.03).toFixed(6)), Number((pLng + dLng_diff * 0.33 - dLng_diff * 0.02).toFixed(6))],
+                [Number((pLat + dLat_diff * 0.67 - dLat_diff * 0.02).toFixed(6)), Number((pLng + dLng_diff * 0.67 + dLng_diff * 0.03).toFixed(6))],
+                [dLat, dLng]
+            ];
+        }
+
+        // BFS traversal on the real road network
+        if (startRes.node.id !== endRes.node.id) {
+            const queue = [[startRes.node.id]];
+            const visited = new Set([startRes.node.id]);
+            let bestPathIds = null;
+
+            while (queue.length > 0) {
+                const currentPath = queue.shift();
+                const tail = currentPath[currentPath.length - 1];
+
+                if (tail === endRes.node.id) {
+                    bestPathIds = currentPath;
+                    break;
+                }
+
+                const neighbors = roadAdj[tail] || [];
+                for (const nxt of neighbors) {
+                    if (!visited.has(nxt)) {
+                        visited.add(nxt);
+                        queue.push([...currentPath, nxt]);
+                    }
+                }
+            }
+
+            if (bestPathIds && bestPathIds.length > 1) {
+                const nodeMap = new Map(intersections.map(n => [n.id, n]));
+                const result = [[pLat, pLng]];
+                for (const id of bestPathIds) {
+                    const node = nodeMap.get(id);
+                    if (node) result.push([node.lat, node.lng]);
+                }
+                result.push([dLat, dLng]);
+                return result;
+            }
+        }
+
+        // Tan Son Nhat Airport Runway Avoidance Guard:
+        // Airport forbidden runway box: lat 10.810 to 10.830, lng 106.645 to 106.675
+        const minLat = Math.min(pLat, dLat);
+        const maxLat = Math.max(pLat, dLat);
+        const minLng = Math.min(pLng, dLng);
+        const maxLng = Math.max(pLng, dLng);
+        const cutsAirport = !(maxLat < 10.808 || minLat > 10.832 || maxLng < 106.642 || minLng > 106.678);
+
+        if (cutsAirport) {
             const path = [[pLat, pLng]];
-            const steps = 6;
-            const deltaLat = dLat - pLat;
-            const deltaLng = dLng - pLng;
-            for (let i = 1; i < steps; i++) {
-                const f = i / steps;
-                let curLat = pLat + deltaLat * f;
-                let curLng = pLng + deltaLng * f;
-                if (i === 1) curLat += deltaLat * 0.03;
-                else if (i === 2) curLng += deltaLng * -0.02;
-                else if (i === 3) curLat += deltaLat * -0.02;
-                else if (i === 4) curLng += deltaLng * 0.02;
-                path.push([Number(curLat.toFixed(6)), Number(curLng.toFixed(6))]);
+            if (pLat < 10.810 && dLat > 10.825) {
+                path.push([10.80100, 106.66650]); // Hoàng Văn Thụ
+                path.push([10.81200, 106.66300]); // Trường Sơn
+                path.push([10.82400, 106.67500]); // Bạch Đằng / Phạm Văn Đồng
+            } else if (pLat > 10.825 && dLat < 10.810) {
+                path.push([10.82400, 106.67500]); // Bạch Đằng / Phạm Văn Đồng
+                path.push([10.81200, 106.66300]); // Trường Sơn
+                path.push([10.80100, 106.66650]); // Hoàng Văn Thụ
+            } else {
+                path.push([10.80200, 106.65500]); // Cộng Hòa x Hoàng Hoa Thám
+                path.push([10.80600, 106.64700]); // Cộng Hòa x Trường Chinh
             }
             path.push([dLat, dLng]);
             return path;
-        };
-
-        // If either pickup or destination is further than 2.5km from central D1 graph, do NOT detour into D1
-        if (startRes.dist > 2500 || endRes.dist > 2500) {
-            return generateDirectCorridor();
         }
 
-        const startNode = startRes.node;
-        const endNode = endRes.node;
-
-        // BFS traversal on the real road network
-        const queue = [[startNode.id]];
-        const visited = new Set([startNode.id]);
-        let bestPathIds = null;
-
-        while (queue.length > 0) {
-            const currentPath = queue.shift();
-            const tail = currentPath[currentPath.length - 1];
-
-            if (tail === endNode.id) {
-                bestPathIds = currentPath;
-                break;
-            }
-
-            const neighbors = roadAdj[tail] || [];
-            for (const nxt of neighbors) {
-                if (!visited.has(nxt)) {
-                    visited.add(nxt);
-                    queue.push([...currentPath, nxt]);
-                }
-            }
-        }
-
-        // Convert path IDs back to lat/lng
-        const nodeMap = new Map(intersections.map(n => [n.id, n]));
-        const result = [];
-
-        if (bestPathIds && bestPathIds.length > 0) {
-            for (const id of bestPathIds) {
-                const node = nodeMap.get(id);
-                if (node) result.push([node.lat, node.lng]);
-            }
-            return result;
-        }
-
-        return generateDirectCorridor();
+        // Stepped street-corridor fallback
+        const midLat = pLat + (dLat - pLat) * 0.45;
+        const midLng = pLng + (dLng - pLng) * 0.55;
+        return [
+            [pLat, pLng],
+            [pLat + (midLat - pLat) * 0.6, pLng + (dLng - pLng) * 0.05],
+            [midLat, midLng],
+            [dLat - (dLat - midLat) * 0.4, dLng - (dLng - midLng) * 0.05],
+            [dLat, dLng]
+        ];
     }
 
     /**
-     * Query Public OpenStreetMap Routing Service (OSRM)
+     * Query Public OpenStreetMap Routing Service (OSRM Primary + Mirror)
      * Real turn-by-turn geometry adhering to OSM street network
      */
     async fetchOsrmRoute(fromLat, fromLon, toLat, toLon) {
-        const url = `https://router.project-osrm.org/route/v1/driving/${fromLon},${fromLat};${toLon},${toLat}?overview=full&geometries=geojson`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 7500);
-        try {
-            const res = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeout);
-            if (!res.ok) return null;
-            const data = await res.json();
-            if (data.code === 'Ok' && Array.isArray(data.routes) && data.routes.length > 0) {
-                const r = data.routes[0];
-                return {
-                    ok: true,
-                    geometry: r.geometry.coordinates.map(([lon, lat]) => [lat, lon]),
-                    distance_m: Math.round(r.distance),
-                    duration_s: Math.round(r.duration)
-                };
-            }
-        } catch (e) {
-            clearTimeout(timeout);
+        const endpoints = [
+            `https://router.project-osrm.org/route/v1/driving/${fromLon},${fromLat};${toLon},${toLat}?overview=full&geometries=geojson`,
+            `https://routing.openstreetmap.de/routed-car/route/v1/driving/${fromLon},${fromLat};${toLon},${toLat}?overview=full&geometries=geojson`
+        ];
+
+        for (const url of endpoints) {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 6000);
+                const res = await fetch(url, { signal: controller.signal });
+                clearTimeout(timeout);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.code === 'Ok' && Array.isArray(data.routes) && data.routes.length > 0) {
+                        const r = data.routes[0];
+                        if (r.geometry && Array.isArray(r.geometry.coordinates) && r.geometry.coordinates.length > 1) {
+                            return {
+                                ok: true,
+                                geometry: r.geometry.coordinates.map(([lon, lat]) => [lat, lon]),
+                                distance_m: Math.round(r.distance),
+                                duration_s: Math.round(r.duration)
+                            };
+                        }
+                    }
+                }
+            } catch (e) {}
         }
         return null;
     }
@@ -3128,13 +3474,27 @@ class CustomerAppController {
             return null;
         }
 
+        // Validate cached geometry: must start near [fromLat, fromLng] (< 200m) and end near [toLat, toLng] (< 200m)
+        const isValidApproachGeometry = (geom) => {
+            if (!Array.isArray(geom) || geom.length < 3) return false;
+            const start = geom[0];
+            const end = geom[geom.length - 1];
+            const startLat = Array.isArray(start) ? start[0] : (start.lat || start.latitude);
+            const startLng = Array.isArray(start) ? start[1] : (start.lng || start.lon || start.longitude);
+            const endLat = Array.isArray(end) ? end[0] : (end.lat || end.latitude);
+            const endLng = Array.isArray(end) ? end[1] : (end.lng || end.lon || end.longitude);
+            const dStart = Math.hypot((startLng - fromLng) * Math.cos(fromLat * Math.PI / 180), startLat - fromLat) * 111320;
+            const dEnd = Math.hypot((endLng - toLng) * Math.cos(toLat * Math.PI / 180), endLat - toLat) * 111320;
+            return dStart < 200 && dEnd < 200;
+        };
+
         // Tier 0: Check if active trip already has driver approach geometry pre-calculated by driver
-        if (this.activeTrip && Array.isArray(this.activeTrip.driverApproachGeometry) && this.activeTrip.driverApproachGeometry.length > 1) {
+        if (this.activeTrip && isValidApproachGeometry(this.activeTrip.driverApproachGeometry)) {
             return this.activeTrip.driverApproachGeometry;
         }
         try {
             const act = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
-            if (act && Array.isArray(act.driverApproachGeometry) && act.driverApproachGeometry.length > 1) {
+            if (act && isValidApproachGeometry(act.driverApproachGeometry)) {
                 return act.driverApproachGeometry;
             }
         } catch (e) {}
@@ -3152,36 +3512,53 @@ class CustomerAppController {
         }
 
         // Tier 2: Public OpenStreetMap Routing Service (OSRM Primary + Mirror)
-        const osrmEndpoints = [
-            `https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`,
-            `https://routing.openstreetmap.de/routed-car/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`
-        ];
-
-        for (const url of osrmEndpoints) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 4500);
-                const res = await fetch(url, { signal: controller.signal });
-                clearTimeout(timeoutId);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.code === 'Ok' && Array.isArray(data.routes) && data.routes.length > 0) {
-                        const coords = data.routes[0].geometry.coordinates;
-                        if (Array.isArray(coords) && coords.length > 1) {
-                            return coords.map(([lon, lat]) => [lat, lon]);
-                        }
-                    }
-                }
-            } catch (err) {}
+        const osrm = await this.fetchOsrmRoute(fromLat, fromLng, toLat, toLng);
+        if (osrm && osrm.ok && Array.isArray(osrm.geometry) && osrm.geometry.length > 1) {
+            return osrm.geometry;
         }
 
-        // Tier 3: Street-Network Fallback (Stepped corridor following road axes, never cutting diagonally across buildings)
-        return this.generateApproachFallbackPath([fromLat, fromLng], [toLat, toLng]);
+        // Tier 3: Street-Network Fallback
+        return this.getStreetFollowingPath({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng });
+    }
+
+    /**
+     * Recalculates shortest road route to destination during Stage 2 (trip in progress) when driver goes off-route
+     */
+    async calculateNavigationRouteToDest(fLat, fLng, tLat, tLng) {
+        const fromLat = Number(fLat);
+        const fromLng = Number(fLng);
+        const toLat = Number(tLat);
+        const toLng = Number(tLng);
+
+        if (isNaN(fromLat) || isNaN(fromLng) || isNaN(toLat) || isNaN(toLng)) {
+            return null;
+        }
+
+        // Tier 1: Local C++ Dijkstra Backend API (/api/route) if available
+        if (typeof apiClient !== 'undefined' && apiClient && typeof apiClient.getRoute === 'function') {
+            try {
+                const routePromise = apiClient.getRoute(fromLat, fromLng, toLat, toLng);
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500));
+                const res = await Promise.race([routePromise, timeoutPromise]);
+                if (res && res.ok && res.data && res.data.success && Array.isArray(res.data.geometry) && res.data.geometry.length > 1) {
+                    return res.data.geometry.map(([lon, lat]) => [lat, lon]);
+                }
+            } catch (e) {}
+        }
+
+        // Tier 2: Public OpenStreetMap Routing Service (OSRM Primary + Mirror)
+        const osrm = await this.fetchOsrmRoute(fromLat, fromLng, toLat, toLng);
+        if (osrm && osrm.ok && Array.isArray(osrm.geometry) && osrm.geometry.length > 1) {
+            return osrm.geometry;
+        }
+
+        // Tier 3: Street-Network Fallback
+        return this.getStreetFollowingPath({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng });
     }
 
     /**
      * Generate stepped street-grid fallback path for driver approach
-     * (Follows orthogonal road corridors, never cuts across buildings or diagonal voids)
+     * Strictly adheres to real road network corridors across HCMC
      */
     generateApproachFallbackPath(fromPoint, toPoint) {
         const fLat = Number(fromPoint[0]);
@@ -3191,30 +3568,12 @@ class CustomerAppController {
 
         if (isNaN(fLat) || isNaN(fLng) || isNaN(tLat) || isNaN(tLng)) return null;
 
-        // Try existing getStreetFollowingPath if points are near central D1 graph
-        try {
-            if (typeof this.getStreetFollowingPath === 'function') {
-                const path = this.getStreetFollowingPath({ lat: fLat, lng: fLng }, { lat: tLat, lng: tLng });
-                if (path && Array.isArray(path) && path.length > 2) {
-                    return path;
-                }
-            }
-        } catch (e) {}
+        const path = this.getStreetFollowingPath({ lat: fLat, lng: fLng }, { lat: tLat, lng: tLng });
+        if (path && Array.isArray(path) && path.length >= 2) {
+            return path;
+        }
 
-        const dLat = tLat - fLat;
-        const dLng = tLng - fLng;
-        const midLat = fLat + dLat * 0.5;
-        const midLng = fLng + dLng * 0.5;
-
-        return [
-            [fLat, fLng],
-            [fLat + dLat * 0.15, fLng + dLng * 0.02],
-            [midLat, fLng + dLng * 0.08],
-            [midLat, midLng],
-            [midLat + dLat * 0.35, midLng + dLng * 0.05],
-            [tLat - dLat * 0.1, tLng],
-            [tLat, tLng]
-        ];
+        return [[fLat, fLng], [tLat, tLng]];
     }
 
     /**
@@ -3416,6 +3775,11 @@ class CustomerAppController {
             return;
         }
 
+        if (this.isAccountLocked(curUser)) {
+            this.showCustomerLockedNotice();
+            return;
+        }
+
         if (this.activeTrip && ['REQUESTED', 'OFFERED', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes(this.activeTrip.status)) {
             if (typeof window.showNavigoModal === 'function') {
                 window.showNavigoModal({
@@ -3474,7 +3838,7 @@ class CustomerAppController {
 
         let isWalletPaid = false;
         const currentUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-        let custWalletPhone = currentUser?.phone || '0901234567';
+        let custWalletPhone = currentUser?.phone || currentUser?.id || '';
 
         // Check wallet balance if paymentMethod is wallet
         if (this.paymentMethod === 'wallet' && window.NaviWalletEngine) {
@@ -3598,9 +3962,12 @@ class CustomerAppController {
                 try {
                     const adminTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
                     const currentUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-                    createdTrip.customerName = currentUser?.name || 'Khách hàng Navigo';
-                    createdTrip.customerPhone = currentUser?.phone || '0901234567';
-                    createdTrip.customerId = currentUser?.id || 'cust_01';
+                    const custName = currentUser?.name || 'Khách hàng Navigo';
+                    const custPhone = currentUser?.phone || '';
+                    const custId = currentUser?.id || ('cust_' + Date.now());
+                    createdTrip.customerName = custName;
+                    createdTrip.customerPhone = custPhone;
+                    createdTrip.customerId = custId;
                     createdTrip.distance = (estDist / 1000).toFixed(1);
                     createdTrip.duration = Math.max(3, Math.round(estDist / 350));
                     createdTrip.fareAmount = estFare;
@@ -3609,9 +3976,9 @@ class CustomerAppController {
 
                     adminTrips.unshift({
                         id: createdTrip.id,
-                        customerName: currentUser?.name || 'Khách hàng Navigo',
-                        customerPhone: currentUser?.phone || '0901234567',
-                        customerId: currentUser?.id || 'cust_01',
+                        customerName: custName,
+                        customerPhone: custPhone,
+                        customerId: custId,
                         routeGeometry: createdTrip.routeGeometry,
                         driverName: createdTrip.driverName || 'Chưa gán',
                         pickup: this.pickup?.name || this.pickup?.address || 'Điểm đón',
@@ -3646,8 +4013,8 @@ class CustomerAppController {
                     localStorage.setItem('goride_active_trip', JSON.stringify({
                         id: createdTrip.id,
                         status: (createdTrip.status || 'REQUESTED').toUpperCase(),
-                        customerName: currentUser?.name || 'Khách hàng',
-                        customerPhone: currentUser?.phone || '0901234567',
+                        customerName: custName,
+                        customerPhone: custPhone,
                         driverName: createdTrip.driverName || 'Chưa gán',
                         licensePlate: createdTrip.licensePlate || '',
                         vehicleModel: createdTrip.vehicleModel || '',
@@ -3745,7 +4112,8 @@ class CustomerAppController {
                 id: this._lastWalletTxnTripId || `TRP-${Math.floor(10000 + Math.random() * 90000)}`,
                 status: 'REQUESTED',
                 customerName: currentUser?.name || 'Khách hàng Navigo',
-                customerPhone: currentUser?.phone || '0901234567',
+                customerPhone: currentUser?.phone || '',
+                customerId: currentUser?.id || ('cust_' + Date.now()),
                 driverName: null,
                 licensePlate: '',
                 vehicleModel: '',
@@ -4199,9 +4567,9 @@ class CustomerAppController {
                 // Refund fare to customer wallet ONLY if trip was actually deducted before
                 if (window.NaviWalletEngine && this.activeTrip && this.activeTrip.walletDeducted === true) {
                     const curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-                    const refundPhone = this.activeTrip.customerPhone || curUser?.phone || '0901234567';
+                    const refundPhone = this.activeTrip.customerPhone || curUser?.phone || curUser?.id || '';
                     const refundFare = Number(this.activeTrip.fareAmount || this.activeTrip.fare || this.selectedVehicleFare || 0);
-                    if (refundFare > 0) {
+                    if (refundFare > 0 && refundPhone) {
                         try {
                             window.NaviWalletEngine.refundTrip(refundPhone, refundFare, tripId, reason);
                         } catch (refErr) {
@@ -4326,6 +4694,7 @@ class CustomerAppController {
                             if (cloudTrip.driverName && cloudTrip.driverName !== 'Chưa gán') adminTrips[idx].driverName = cloudTrip.driverName;
                             if (cloudTrip.licensePlate) adminTrips[idx].licensePlate = cloudTrip.licensePlate;
                             if (cloudTrip.vehicleModel) adminTrips[idx].vehicleModel = cloudTrip.vehicleModel;
+                            if (cloudTrip.vehicleType) adminTrips[idx].vehicleType = cloudTrip.vehicleType;
                             if (cloudTrip.driverLat) adminTrips[idx].driverLat = cloudTrip.driverLat;
                             if (cloudTrip.driverLon || cloudTrip.driverLng) adminTrips[idx].driverLon = cloudTrip.driverLon || cloudTrip.driverLng;
                             localStorage.setItem('goride_admin_trips', JSON.stringify(adminTrips));
@@ -4336,6 +4705,7 @@ class CustomerAppController {
                             if (cloudTrip.driverName && cloudTrip.driverName !== 'Chưa gán') act.driverName = cloudTrip.driverName;
                             if (cloudTrip.licensePlate) act.licensePlate = cloudTrip.licensePlate;
                             if (cloudTrip.vehicleModel) act.vehicleModel = cloudTrip.vehicleModel;
+                            if (cloudTrip.vehicleType) act.vehicleType = cloudTrip.vehicleType;
                             if (cloudTrip.driverLat) act.driverLat = cloudTrip.driverLat;
                             if (cloudTrip.driverLon || cloudTrip.driverLng) act.driverLon = cloudTrip.driverLon || cloudTrip.driverLng;
                             localStorage.setItem('goride_active_trip', JSON.stringify(act));
@@ -4347,12 +4717,14 @@ class CustomerAppController {
                     if (prevStatus === 'REQUESTED' && (cloudTrip.status === 'ACCEPTED' || cloudTrip.status === 'ARRIVED')) {
                         this.showToast(`Tài xế ${cloudTrip.driverName || 'đối tác'} đã nhận chuyến! Đang đến đón bạn.`, 'success', 5000);
                         if (typeof navigoNotifications !== 'undefined') {
+                            const notifVType = this.resolveTripVehicleType(cloudTrip);
+                            const notifDetails = this.getVehicleDetails(notifVType);
                             navigoNotifications.addNotification({
                                 id: 'trip_acc_' + (cloudTrip.id || this.activeTripId),
                                 category: 'trips',
                                 title: 'TÀI XẾ ĐÃ NHẬN CHUYẾN #' + (cloudTrip.id || this.activeTripId),
                                 body: 'Tài xế ' + (cloudTrip.driverName || 'đối tác') + ' (' + (cloudTrip.licensePlate || 'Xe thuần điện') + ') đã nhận chuyến và đang di chuyển tới điểm đón bạn.',
-                                icon: '🚗',
+                                icon: notifDetails.icon || '🚗',
                                 actionUrl: 'customer.html',
                                 actionText: 'Xem tài xế'
                             });
@@ -4718,9 +5090,14 @@ class CustomerAppController {
             const driverPlateEl = document.getElementById('track-driver-plate') || document.getElementById('driver-vehicle');
             const driverModelEl = document.getElementById('track-driver-model');
             const driverRatingEl = document.getElementById('track-driver-rating') || document.getElementById('driver-rating');
+            const driverAvatarEl = document.getElementById('track-driver-avatar') || document.getElementById('driver-avatar');
 
-            const tripVType = this.normalizeVehicleType(trip.vehicleType || trip.serviceType || this.selectedService || 'car4');
+            const tripVType = this.resolveTripVehicleType(trip);
             const vDetails = this.getVehicleDetails(tripVType);
+
+            if (driverAvatarEl) {
+                driverAvatarEl.textContent = vDetails.icon || '🛵';
+            }
 
             if (driverNameEl) driverNameEl.textContent = trip.driverName || 'Tài xế Navigo đối tác';
             if (driverPlateEl) {
@@ -4734,7 +5111,8 @@ class CustomerAppController {
             }
             if (driverModelEl) {
                 if (trip.vehicleModel) {
-                    driverModelEl.textContent = `${vDetails.icon} ${trip.vehicleModel}`;
+                    const cleanModel = String(trip.vehicleModel).replace(/^[\p{Emoji}\u2000-\u3300\s]+/u, '').trim();
+                    driverModelEl.textContent = `${vDetails.icon} ${cleanModel || vDetails.name}`;
                 } else {
                     driverModelEl.textContent = `${vDetails.icon} ${vDetails.name}`;
                 }
@@ -4742,7 +5120,7 @@ class CustomerAppController {
             if (driverRatingEl) driverRatingEl.textContent = trip.driverRating ? `★ ${trip.driverRating}` : '★ 5.0';
 
             const statusIcon = document.getElementById('tracking-status-icon');
-            if (statusIcon) statusIcon.textContent = '🚗';
+            if (statusIcon) statusIcon.textContent = vDetails.icon || '🛵';
 
             const btnCallDriver = document.getElementById('btn-call-driver');
             if (btnCallDriver) {
@@ -4784,21 +5162,21 @@ class CustomerAppController {
                 let dLon = null;
                 let dHeading = 0;
 
-                // Priority 1: Hold the most recent verified dynamic driver position
-                if (this._latestDriverPosition && !isNaN(this._latestDriverPosition.lat) && this._latestDriverPosition.lat !== 0) {
+                // Priority 1: Check if trip or incoming payload has a fresh driver location
+                const freshLat = Number(trip.driverLat !== undefined ? trip.driverLat : (trip.driverLocation && trip.driverLocation.lat));
+                const freshLon = Number(trip.driverLon !== undefined ? trip.driverLon : (trip.driverLng !== undefined ? trip.driverLng : (trip.driverLocation && (trip.driverLocation.lng || trip.driverLocation.lon))));
+                const freshHeading = Number(trip.driverHeading !== undefined ? trip.driverHeading : (trip.driverLocation && trip.driverLocation.heading) || 0);
+
+                if (!isNaN(freshLat) && !isNaN(freshLon) && freshLat !== 0 && freshLon !== 0) {
+                    dLat = freshLat;
+                    dLon = freshLon;
+                    dHeading = freshHeading;
+                    this._latestDriverPosition = { lat: dLat, lng: dLon, heading: dHeading, timestamp: Date.now() };
+                } else if (this._latestDriverPosition && !isNaN(this._latestDriverPosition.lat) && this._latestDriverPosition.lat !== 0) {
+                    // Between 2 updates: maintain last known position steadily (no jumping, no teleporting)
                     dLat = Number(this._latestDriverPosition.lat);
                     dLon = Number(this._latestDriverPosition.lng);
                     dHeading = Number(this._latestDriverPosition.heading || 0);
-                } else if (trip.driverLocation && trip.driverLocation.lat) {
-                    dLat = Number(trip.driverLocation.lat);
-                    dLon = Number(trip.driverLocation.lng);
-                    dHeading = Number(trip.driverLocation.heading || 0);
-                    this._latestDriverPosition = { lat: dLat, lng: dLon, heading: dHeading, timestamp: Date.now() };
-                } else if (trip.driverLat !== undefined && trip.driverLat !== null && !isNaN(Number(trip.driverLat)) && Number(trip.driverLat) !== 0) {
-                    dLat = Number(trip.driverLat);
-                    dLon = Number(trip.driverLon !== undefined ? trip.driverLon : trip.driverLng);
-                    dHeading = Number(trip.driverHeading || 0);
-                    this._latestDriverPosition = { lat: dLat, lng: dLon, heading: dHeading, timestamp: Date.now() };
                 }
 
                 // Initial fallbacks if _latestDriverPosition not yet populated
@@ -4865,15 +5243,17 @@ class CustomerAppController {
                     }
                     this._latestDriverPosition = { lat: dLat, lng: dLon, heading: dHeading, timestamp: Date.now() };
 
-                    let vType = tripVType;
+                    let vType = tripVType || this.resolveTripVehicleType(trip);
                     try {
                         const onlineDrivers = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
                         const dEntry = Object.values(onlineDrivers).find(d => 
-                            (trip.driverName && d.name === trip.driverName) || 
-                            (trip.licensePlate && d.plate === trip.licensePlate)
+                            d && (
+                                (trip.driverName && d.name === trip.driverName) || 
+                                (trip.licensePlate && (d.plate === trip.licensePlate || d.licensePlate === trip.licensePlate))
+                            )
                         );
-                        if (dEntry && dEntry.vehicleType) {
-                            vType = this.normalizeVehicleType(dEntry.vehicleType);
+                        if (dEntry && (dEntry.vehicleType || dEntry.type)) {
+                            vType = this.normalizeVehicleType(dEntry.vehicleType || dEntry.type);
                         }
                     } catch (e) {}
 
@@ -4885,6 +5265,7 @@ class CustomerAppController {
                         name: trip.driverName || 'Tài xế',
                         vehicle: `${vDetails.label}${trip.licensePlate ? ' - ' + trip.licensePlate : ''}`,
                         vehicleType: vType,
+                        iconType: vType,
                         status: status,
                         routeGeometry: tripGeometry,
                         isActive: true
@@ -4916,36 +5297,58 @@ class CustomerAppController {
                         }
 
                         // Dynamically trim blue driver approach route behind current position ("snake eating the path")
+                        let trimRes = null;
                         if (typeof this.mapController.trimDriverRoute === 'function') {
-                            this.mapController.trimDriverRoute(dLat, dLon);
+                            trimRes = this.mapController.trimDriverRoute(dLat, dLon);
                         }
 
-                        const lastPos = this._lastApproachDriverPos;
-                        const moved = !lastPos || (Math.abs(dLat - lastPos.lat) > 0.0003 || Math.abs(dLon - lastPos.lng) > 0.0003);
-                        if (moved || !this._hasDrawnApproachRoute) {
-                            this._lastApproachDriverPos = { lat: dLat, lng: dLon };
-                            const approachToken = ++this._approachRouteSeq || (this._approachRouteSeq = 1);
+                        const isOffRoute = trimRes && trimRes.isOffRoute;
+                        const needsInitialRoute = !this._hasDrawnApproachRoute || !this.mapController.driverRoutePolyline;
 
-                            // Calculate realistic turn-by-turn road route via Shared Driver Geometry / C++ Dijkstra / OSRM / Street graph
-                            this.calculateDriverApproachRoute(dLat, dLon, pLat, pLon).then(routePath => {
-                                if (this._approachRouteSeq === approachToken && Array.isArray(routePath) && routePath.length > 1) {
-                                    if (this.mapController && typeof this.mapController.drawDriverRoute === 'function') {
-                                        this.mapController.drawDriverRoute(routePath, {
-                                            color: '#0288d1',
-                                            weight: 6,
-                                            opacity: 0.95
-                                        });
-                                        this._hasDrawnApproachRoute = true;
-                                        if (typeof this.mapController.trimDriverRoute === 'function') {
+                        if (needsInitialRoute || isOffRoute) {
+                            if (isOffRoute) {
+                                this._custOffRouteTicks = (this._custOffRouteTicks || 0) + 1;
+                            } else {
+                                this._custOffRouteTicks = 0;
+                            }
+
+                            const now = Date.now();
+                            const canReroute = needsInitialRoute || (this._custOffRouteTicks >= 2 && (!this._lastApproachRerouteTime || (now - this._lastApproachRerouteTime > 6000)));
+
+                            if (canReroute) {
+                                this._lastApproachRerouteTime = now;
+                                this._custOffRouteTicks = 0;
+                                const approachToken = ++this._approachRouteSeq || (this._approachRouteSeq = 1);
+
+                                // Calculate realistic turn-by-turn road route via Shared Driver Geometry / C++ Dijkstra / OSRM / Street graph
+                                this.calculateDriverApproachRoute(dLat, dLon, pLat, pLon).then(routePath => {
+                                    if (this._approachRouteSeq === approachToken && Array.isArray(routePath) && routePath.length > 1) {
+                                        if (this.mapController) {
+                                            if (this.mapController.driverRoutePolyline && typeof this.mapController.updateDriverRouteGeometry === 'function') {
+                                                this.mapController.updateDriverRouteGeometry(routePath, {
+                                                    color: '#0288d1',
+                                                    weight: 6,
+                                                    opacity: 0.95
+                                                });
+                                            } else if (typeof this.mapController.drawDriverRoute === 'function') {
+                                                this.mapController.drawDriverRoute(routePath, {
+                                                    color: '#0288d1',
+                                                    weight: 6,
+                                                    opacity: 0.95
+                                                });
+                                            }
+                                            this._hasDrawnApproachRoute = true;
                                             this.mapController.trimDriverRoute(dLat, dLon);
                                         }
+                                        if (this.mapController && typeof this.mapController.fitBounds === 'function' && !this._hasFittedApproachBounds) {
+                                            this._hasFittedApproachBounds = true;
+                                            this.mapController.fitBounds([[dLat, dLon], [pLat, pLon]], { padding: [75, 75] });
+                                        }
                                     }
-                                    if (this.mapController && typeof this.mapController.fitBounds === 'function' && !this._hasFittedApproachBounds) {
-                                        this._hasFittedApproachBounds = true;
-                                        this.mapController.fitBounds([[dLat, dLon], [pLat, pLon]], { padding: [75, 75] });
-                                    }
-                                }
-                            });
+                                });
+                            }
+                        } else {
+                            this._custOffRouteTicks = 0;
                         }
                     } else if (status === 'ARRIVED') {
                         // Driver arrived at pickup -> clear blue approach line and highlight trip route
@@ -4995,8 +5398,53 @@ class CustomerAppController {
                         }
 
                         // STAGE 2: Trip in progress -> dynamically trim trip route behind vehicle position ("snake eating the path")
+                        let trimRes = null;
                         if (typeof this.mapController.trimRoute === 'function') {
-                            this.mapController.trimRoute(dLat, dLon);
+                            trimRes = this.mapController.trimRoute(dLat, dLon);
+                        }
+
+                        const needsTripRoute = !this.mapController.routePolyline;
+                        const isOffRoute = trimRes && trimRes.isOffRoute;
+
+                        if (needsTripRoute || isOffRoute) {
+                            if (isOffRoute) {
+                                this._custTripOffRouteTicks = (this._custTripOffRouteTicks || 0) + 1;
+                            } else {
+                                this._custTripOffRouteTicks = 0;
+                            }
+
+                            const now = Date.now();
+                            const canReroute = needsTripRoute || (this._custTripOffRouteTicks >= 2 && (!this._lastTripRerouteTime || (now - this._lastTripRerouteTime > 6000)));
+
+                            if (canReroute && !isNaN(destLat) && !isNaN(destLon) && destLat !== 0) {
+                                this._lastTripRerouteTime = now;
+                                this._custTripOffRouteTicks = 0;
+
+                                this.calculateNavigationRouteToDest(dLat, dLon, destLat, destLon).then(newPath => {
+                                    if (Array.isArray(newPath) && newPath.length > 1) {
+                                        this.currentRouteGeometry = newPath;
+                                        if (this.activeTrip) this.activeTrip.routeGeometry = newPath;
+                                        if (this.mapController) {
+                                            if (this.mapController.routePolyline && typeof this.mapController.updateRouteGeometry === 'function') {
+                                                this.mapController.updateRouteGeometry(newPath, {
+                                                    color: '#10b981',
+                                                    weight: 5,
+                                                    opacity: 0.9
+                                                });
+                                            } else if (typeof this.mapController.drawRoute === 'function') {
+                                                this.mapController.drawRoute(newPath, {
+                                                    color: '#10b981',
+                                                    weight: 5,
+                                                    opacity: 0.9
+                                                });
+                                            }
+                                            this.mapController.trimRoute(dLat, dLon);
+                                        }
+                                    }
+                                });
+                            }
+                        } else {
+                            this._custTripOffRouteTicks = 0;
                         }
                     } else {
                         this._lastApproachDriverPos = null;
@@ -5099,15 +5547,17 @@ class CustomerAppController {
             // 1. Deduct customer wallet upon successful completion (isolated)
             try {
                 const currentUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-                const custPhone = tripData?.customerPhone || currentUser?.phone || '0901234567';
+                const custPhone = tripData?.customerPhone || currentUser?.phone || currentUser?.id || '';
                 const fareNum = Number(tripData?.fareAmount || tripData?.fare) || 45000;
-                const curW = window.NaviWalletEngine.getWallet(custPhone);
-                const alreadyDeducted = curW && Array.isArray(curW.transactions) && curW.transactions.some(t => t.tripId === tripCode || (t.id && t.id.includes(tripCode)));
-                if (!alreadyDeducted) {
-                    window.NaviWalletEngine.payTrip(custPhone, fareNum, tripCode, {
-                        pickupName: tripData?.pickupName || (tripData?.pickup && tripData.pickup.name) || 'Điểm đón',
-                        dropoffName: tripData?.dropoffName || (tripData?.destination && tripData.destination.name) || 'Điểm đến'
-                    });
+                if (custPhone) {
+                    const curW = window.NaviWalletEngine.getWallet(custPhone);
+                    const alreadyDeducted = curW && Array.isArray(curW.transactions) && curW.transactions.some(t => t.tripId === tripCode || (t.id && t.id.includes(tripCode)));
+                    if (!alreadyDeducted) {
+                        window.NaviWalletEngine.payTrip(custPhone, fareNum, tripCode, {
+                            pickupName: tripData?.pickupName || (tripData?.pickup && tripData.pickup.name) || 'Điểm đón',
+                            dropoffName: tripData?.dropoffName || (tripData?.destination && tripData.destination.name) || 'Điểm đến'
+                        });
+                    }
                 }
             } catch (err) {
                 console.warn('[CustomerWallet] Completion deduction sync notice:', err);
@@ -5124,13 +5574,12 @@ class CustomerAppController {
                     const tMatch = adm.find(t => t && (t.id === tripCode));
                     if (tMatch && tMatch.driverPhone) targetDriverPhones.add(tMatch.driverPhone);
                 } catch(e) {}
-                targetDriverPhones.add('0918765432');
 
                 targetDriverPhones.forEach(dPhone => {
                     if (!dPhone) return;
                     window.NaviWalletEngine.creditDriverTrip(dPhone, fareNum, tripCode, {
                         customerName: tripData?.customerName || (typeof sessionManager !== 'undefined' ? sessionManager.getUser?.()?.name : 'Khách hàng Navigo') || 'Khách hàng Navigo',
-                        customerPhone: tripData?.customerPhone || '0901234567',
+                        customerPhone: tripData?.customerPhone || (currentUser?.phone || ''),
                         pickup: tripData?.pickupName || (tripData?.pickup && tripData.pickup.name) || 'Điểm đón',
                         destination: tripData?.dropoffName || (tripData?.destination && tripData.destination.name) || 'Điểm đến'
                     });

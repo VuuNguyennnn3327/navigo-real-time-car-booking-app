@@ -1265,8 +1265,7 @@
         function initWalletState() {
             if (!window.NaviWalletEngine) return;
 
-            const urlRole = (typeof window !== 'undefined' && window.location && window.location.search) ? new URLSearchParams(window.location.search).get('role') : null;
-            const isAuthed = urlRole === 'driver' || (typeof sessionManager !== 'undefined' && sessionManager && sessionManager.isAuthenticated());
+            const isAuthed = (typeof sessionManager !== 'undefined' && sessionManager && sessionManager.isAuthenticated());
             const guestPrompt = document.getElementById('wallet-guest-auth-prompt');
             const heroCard = document.getElementById('wallet-card-hero');
             const actionsGrid = document.querySelector('.wallet-actions-grid');
@@ -1801,8 +1800,7 @@
         function handleExternalSyncUpdate() {
             if (!window.NaviWalletEngine) return;
 
-            const urlRole = (typeof window !== 'undefined' && window.location && window.location.search) ? new URLSearchParams(window.location.search).get('role') : null;
-            const isAuthed = urlRole === 'driver' || (typeof sessionManager !== 'undefined' && sessionManager && sessionManager.isAuthenticated());
+            const isAuthed = (typeof sessionManager !== 'undefined' && sessionManager && sessionManager.isAuthenticated());
             const guestPrompt = document.getElementById('wallet-guest-auth-prompt');
             const heroCard = document.getElementById('wallet-card-hero');
             const actionsGrid = document.querySelector('.wallet-actions-grid');

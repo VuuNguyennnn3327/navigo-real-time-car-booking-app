@@ -297,6 +297,9 @@
                             if (matchedUser.password && matchedUser.password !== password) {
                                 throw new Error('Mật khẩu không chính xác. Vui lòng kiểm tra lại.');
                             }
+                            if (matchedUser.status === 'locked') {
+                                throw new Error('Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.');
+                            }
                             if (matchedUser.role === 'driver' && matchedUser.status === 'pending') {
                                 throw new Error('Hồ sơ tài xế của bạn đang trong trạng thái CHỜ PHÊ DUYỆT bởi Quản trị viên (Admin). Vui lòng đợi Admin duyệt hồ sơ trước khi đăng nhập.');
                             }
@@ -409,6 +412,10 @@
 
                     if (!result || !result.user) {
                         throw new Error('Không thể xác thực thông tin tài khoản. Vui lòng thử lại.');
+                    }
+
+                    if (result.user.status === 'locked') {
+                        throw new Error('Tài khoản của bạn đã bị Quản trị viên tạm khóa. Vui lòng liên hệ tổng đài Navigo: 1900 8888 để được hỗ trợ.');
                     }
 
                     // Save session safely

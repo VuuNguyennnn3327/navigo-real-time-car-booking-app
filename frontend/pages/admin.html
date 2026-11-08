@@ -931,6 +931,11 @@
                         <span class="nav-label">Quản lý khách hàng</span>
                         <span class="badge badge-success nav-link-badge" id="sidebar-customers-count" style="font-size:0.72rem;">0</span>
                     </a>
+                    <a href="#staff" class="nav-item nav-link" data-tab="staff">
+                        <span class="nav-icon">👔</span>
+                        <span class="nav-label">Quản lý nhân lực</span>
+                        <span class="badge badge-secondary nav-link-badge" id="sidebar-staff-count" style="font-size:0.72rem;">0</span>
+                    </a>
                     <a href="#promotions" class="nav-item nav-link" data-tab="promotions">
                         <span class="nav-icon">📢</span>
                         <span class="nav-label">Phát hành thông báo</span>
@@ -1243,10 +1248,10 @@
                     <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-6); flex-wrap:wrap; gap:12px;">
                         <div>
                             <h2 style="margin:0 0 4px 0; font-size:1.6rem; font-weight:800; color:var(--color-primary); display:flex; align-items:center; gap:10px;">
-                                <span>👥</span> Quản lý Khách hàng & Người dùng
+                                <span>👥</span> Quản lý Khách hàng
                             </h2>
                             <p style="margin:0; color:var(--color-gray-600); font-size:0.9rem;">
-                                Danh sách tài khoản khách hàng, thống kê số cuốc xe, phân quyền Quản trị viên và xóa dữ liệu triệt để.
+                                Danh sách tài khoản khách hàng, thống kê số cuốc xe hoàn thành và trạng thái hoạt động trên hệ thống.
                             </p>
                         </div>
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -1263,7 +1268,7 @@
                                 <span>🔄</span> Đồng bộ đám mây
                             </button>
                             <button class="btn btn-primary" onclick="adminController.openAddCustomerModal()">
-                                <span>➕</span> Thêm tài khoản mới
+                                <span>➕</span> Thêm khách hàng mới
                             </button>
                         </div>
                     </div>
@@ -1285,10 +1290,10 @@
                             </div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-card-icon" style="background:#fef3c7; color:#d97706;">👑</div>
+                            <div class="stat-card-icon" style="background:#fef3c7; color:#d97706;">🚗</div>
                             <div class="stat-card-info">
-                                <span class="stat-card-value" id="stat-admin-users">0</span>
-                                <span class="stat-card-label">Quản trị viên</span>
+                                <span class="stat-card-value" id="stat-customer-trips">0</span>
+                                <span class="stat-card-label">Tổng cuốc hoàn thành</span>
                             </div>
                         </div>
                         <div class="stat-card">
@@ -1303,16 +1308,10 @@
                     <!-- Filter Bar -->
                     <div class="admin-filters" style="display:flex; gap:12px; margin-bottom:var(--space-4); background:#fff; padding:12px 16px; border-radius:12px; border:1px solid var(--color-gray-200); align-items:center; flex-wrap:wrap;">
                         <div style="flex:1; min-width:240px; position:relative;">
-                            <input type="text" id="customer-search-input" class="form-input" placeholder="🔍 Tìm theo Tên, Email, SĐT hoặc ID..." style="width:100%; border-radius:8px; padding-left:36px;">
+                            <input type="text" id="customer-search-input" class="form-input" placeholder="🔍 Tìm theo Tên, Email, SĐT hoặc Mã khách hàng..." style="width:100%; border-radius:8px; padding-left:36px;">
                             <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:14px; opacity:0.6;">🔍</span>
                         </div>
-                        <select id="customer-role-filter" class="form-select" style="min-width:160px; border-radius:8px;">
-                            <option value="all">Tất cả vai trò</option>
-                            <option value="customer">Chỉ Khách hàng</option>
-                            <option value="driver">Đối tác Tài xế</option>
-                            <option value="admin">Quản trị viên (Admin)</option>
-                        </select>
-                        <select id="customer-status-filter" class="form-select" style="min-width:160px; border-radius:8px;">
+                        <select id="customer-status-filter" class="form-select" style="min-width:180px; border-radius:8px;">
                             <option value="all">Tất cả trạng thái</option>
                             <option value="active">Đang hoạt động (Active)</option>
                             <option value="locked">Bị khóa (Locked)</option>
@@ -1326,18 +1325,108 @@
                             <thead>
                                 <tr>
                                     <th>MÃ KHÁCH HÀNG</th>
-                                    <th>NGƯỜI DÙNG</th>
+                                    <th>HÀNH KHÁCH</th>
                                     <th>SỐ ĐIỆN THOẠI</th>
                                     <th>EMAIL</th>
-                                    <th>VAI TRÒ</th>
-                                    <th>CUỐC HOÀN THÀNH</th>
+                                    <th style="text-align:center;">CUỐC HOÀN THÀNH</th>
                                     <th>TRẠNG THÁI</th>
                                     <th>NGÀY THAM GIA</th>
                                     <th style="text-align:right;">THAO TÁC</th>
                                 </tr>
                             </thead>
                             <tbody id="customers-table-body">
-                                <tr><td colspan="9" class="text-center" style="padding:28px;">Đang tải danh sách người dùng...</td></tr>
+                                <tr><td colspan="8" class="text-center" style="padding:28px;">Đang tải danh sách khách hàng...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ==========================================
+                      TAB 5.5: QUẢN LÝ NHÂN LỰC & PHÂN QUYỀN
+                      ========================================== -->
+                <div class="tab-panel" id="tab-staff" style="display:none;">
+                    <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-6); flex-wrap:wrap; gap:12px;">
+                        <div>
+                            <h2 style="margin:0 0 4px 0; font-size:1.6rem; font-weight:800; color:var(--color-primary); display:flex; align-items:center; gap:10px;">
+                                <span>👔</span> Quản lý Nhân lực & Phân quyền
+                            </h2>
+                            <p style="margin:0; color:var(--color-gray-600); font-size:0.9rem;">
+                                Quản trị tài khoản Quản trị viên, Điều phối viên và phân quyền vận hành hệ thống Navigo.
+                            </p>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button class="btn btn-outline" onclick="adminController.syncCustomersFromCloud()">
+                                <span>🔄</span> Đồng bộ đám mây
+                            </button>
+                            <button class="btn btn-primary" onclick="adminController.openAddStaffModal()" style="background:linear-gradient(135deg, #00b1a9, #0f2d3c); border:none; display:flex; align-items:center; gap:6px;">
+                                <span>➕</span> Thêm nhân sự quản trị
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Staff KPI Summary Cards -->
+                    <div class="stats-grid" style="margin-bottom:var(--space-5);">
+                        <div class="stat-card">
+                            <div class="stat-card-icon" style="background:#e0f2fe; color:#0284c7;">👔</div>
+                            <div class="stat-card-info">
+                                <span class="stat-card-value" id="stat-total-staff">0</span>
+                                <span class="stat-card-label">Tổng nhân sự</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon" style="background:#fef3c7; color:#d97706;">👑</div>
+                            <div class="stat-card-info">
+                                <span class="stat-card-value" id="stat-admin-staff">0</span>
+                                <span class="stat-card-label">Quản trị viên (Admin)</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon" style="background:#dcfce7; color:#16a34a;">✅</div>
+                            <div class="stat-card-info">
+                                <span class="stat-card-value" id="stat-active-staff">0</span>
+                                <span class="stat-card-label">Đang hoạt động</span>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-card-icon" style="background:#f1f5f9; color:#64748b;">🔒</div>
+                            <div class="stat-card-info">
+                                <span class="stat-card-value" id="stat-locked-staff">0</span>
+                                <span class="stat-card-label">Tài khoản bị khóa</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Staff Filter Bar -->
+                    <div class="admin-filters" style="display:flex; gap:12px; margin-bottom:var(--space-4); background:#fff; padding:12px 16px; border-radius:12px; border:1px solid var(--color-gray-200); align-items:center; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:240px; position:relative;">
+                            <input type="text" id="staff-search-input" class="form-input" placeholder="🔍 Tìm theo Tên, Email, SĐT hoặc Mã nhân sự..." style="width:100%; border-radius:8px; padding-left:36px;">
+                            <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:14px; opacity:0.6;">🔍</span>
+                        </div>
+                        <select id="staff-status-filter" class="form-select" style="min-width:180px; border-radius:8px;">
+                            <option value="all">Tất cả trạng thái</option>
+                            <option value="active">Đang hoạt động (Active)</option>
+                            <option value="locked">Bị khóa (Locked)</option>
+                        </select>
+                        <button class="btn btn-ghost btn-sm" onclick="adminController.resetStaffFilters()">Đặt lại</button>
+                    </div>
+
+                    <!-- Staff Table -->
+                    <div class="data-table-responsive" style="background:#fff; border:1px solid var(--color-gray-200); border-radius:12px; overflow-x:auto;">
+                        <table class="data-table admin-table">
+                            <thead>
+                                <tr>
+                                    <th>MÃ NHÂN SỰ</th>
+                                    <th>NHÂN SỰ HỆ THỐNG</th>
+                                    <th>SỐ ĐIỆN THOẠI</th>
+                                    <th>EMAIL</th>
+                                    <th>VAI TRÒ / QUYỀN HẠN</th>
+                                    <th>TRẠNG THÁI</th>
+                                    <th>NGÀY BỔ NHIỆM</th>
+                                    <th style="text-align:right;">THAO TÁC</th>
+                                </tr>
+                            </thead>
+                            <tbody id="staff-table-body">
+                                <tr><td colspan="8" class="text-center" style="padding:28px;">Đang tải danh sách nhân sự quản trị...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1555,13 +1644,12 @@
                                 <input type="number" id="driver-form-exp" class="form-input" min="0" max="40" value="3">
                             </div>
                             <div class="form-group">
-                                <label class="form-label" for="driver-form-status">Trạng thái <span style="color:var(--color-error);">*</span></label>
-                                <select id="driver-form-status" class="form-select">
-                                    <option value="active">Đang hoạt động (Active)</option>
-                                    <option value="offline">Ngoại tuyến (Offline)</option>
-                                    <option value="pending">Chờ phê duyệt</option>
-                                    <option value="locked">Bị khóa</option>
-                                </select>
+                                <label class="form-label">Trạng thái kết nối (Thời gian thực)</label>
+                                <div id="driver-form-status-box" style="padding: 9px 12px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; min-height: 42px;">
+                                    <span id="driver-form-status-badge"><span class="badge" style="background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1;">⚪ Ngoại tuyến</span></span>
+                                    <span style="font-size: 11px; color: #64748b; font-weight: 500;">(Tự động ghi nhận)</span>
+                                </div>
+                                <input type="hidden" id="driver-form-status" value="active">
                             </div>
                         </div>
                     </div>
@@ -1600,21 +1688,13 @@
                             </div>
                         </div>
 
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
-                            <div class="form-group">
-                                <label class="form-label" for="customer-form-role">Vai trò quyền hạn <span style="color:var(--color-error);">*</span></label>
-                                <select id="customer-form-role" class="form-select">
-                                    <option value="customer" selected>Khách hàng (Customer)</option>
-                                    <option value="admin">Quản trị viên (Admin)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" for="customer-form-status">Trạng thái <span style="color:var(--color-error);">*</span></label>
-                                <select id="customer-form-status" class="form-select">
-                                    <option value="active" selected>Đang hoạt động (Active)</option>
-                                    <option value="locked">Bị khóa (Locked)</option>
-                                </select>
-                            </div>
+                        <input type="hidden" id="customer-form-role" value="customer">
+                        <div class="form-group" style="margin-bottom:12px;">
+                            <label class="form-label" for="customer-form-status">Trạng thái tài khoản <span style="color:var(--color-error);">*</span></label>
+                            <select id="customer-form-status" class="form-select">
+                                <option value="active" selected>🟢 Đang hoạt động (Active)</option>
+                                <option value="locked">🔒 Bị khóa (Locked)</option>
+                            </select>
                         </div>
 
                         <div class="form-group" style="margin-bottom:12px;" id="customer-form-password-group">
@@ -1625,6 +1705,67 @@
                     <div class="admin-modal-footer">
                         <button type="button" class="btn btn-ghost" onclick="adminController.closeModal('modal-customer')">Hủy</button>
                         <button type="submit" class="btn btn-primary" id="btn-save-customer">Lưu tài khoản</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- MODAL 4.5: STAFF (ADD / EDIT) -->
+        <div class="admin-modal-overlay" id="modal-staff">
+            <div class="admin-modal-card">
+                <div class="admin-modal-header" style="background:linear-gradient(135deg, #0f2d3c 0%, #1e3a8a 100%); color:#fff;">
+                    <h3 id="modal-staff-title" style="color:#fff; margin:0; display:flex; align-items:center; gap:8px;">
+                        <span>👔</span> Thêm nhân sự quản trị mới
+                    </h3>
+                    <button type="button" class="admin-modal-close" style="color:#fff;" onclick="adminController.closeModal('modal-staff')">&times;</button>
+                </div>
+                <form id="form-staff" onsubmit="adminController.saveStaff(event)">
+                    <div class="admin-modal-body" style="padding:20px;">
+                        <input type="hidden" id="staff-form-id">
+                        
+                        <div class="form-group" style="margin-bottom:12px;">
+                            <label class="form-label" for="staff-form-name">Họ và tên nhân sự <span style="color:var(--color-error);">*</span></label>
+                            <input type="text" id="staff-form-name" class="form-input" required placeholder="Ví dụ: Nguyễn Văn Quản Trị">
+                        </div>
+
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+                            <div class="form-group">
+                                <label class="form-label" for="staff-form-email">Email công việc <span style="color:var(--color-error);">*</span></label>
+                                <input type="email" id="staff-form-email" class="form-input" required placeholder="admin@navigo.vn">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="staff-form-phone">Số điện thoại liên hệ <span style="color:var(--color-error);">*</span></label>
+                                <input type="tel" id="staff-form-phone" class="form-input" required placeholder="0888888888">
+                            </div>
+                        </div>
+
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+                            <div class="form-group">
+                                <label class="form-label" for="staff-form-role">Chức vụ / Quyền hạn <span style="color:var(--color-error);">*</span></label>
+                                <select id="staff-form-role" class="form-select" style="font-weight:700;">
+                                    <option value="admin" selected>👑 Quản trị viên (Admin)</option>
+                                    <option value="dispatcher">🛡️ Điều phối viên vận hành</option>
+                                    <option value="support">🎧 Nhân viên hỗ trợ (Support)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="staff-form-status">Trạng thái công tác <span style="color:var(--color-error);">*</span></label>
+                                <select id="staff-form-status" class="form-select">
+                                    <option value="active" selected>🟢 Đang hoạt động (Active)</option>
+                                    <option value="locked">🔒 Tạm khóa tài khoản</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:12px;" id="staff-form-password-group">
+                            <label class="form-label" for="staff-form-password">Mật khẩu tài khoản <span id="staff-pwd-req" style="color:var(--color-error);">*</span></label>
+                            <input type="password" id="staff-form-password" class="form-input" placeholder="Nhập mật khẩu truy cập hệ thống quản trị">
+                            <span style="font-size:0.75rem; color:#64748b; margin-top:3px; display:block;">(Khi chỉnh sửa: để trống nếu không muốn thay đổi mật khẩu)</span>
+                        </div>
+                    </div>
+                    <div class="admin-modal-footer">
+                        <button type="button" class="btn btn-ghost" onclick="adminController.closeModal('modal-staff')">Hủy</button>
+                        <button type="submit" class="btn btn-primary" id="btn-save-staff" style="background:linear-gradient(135deg, #00b1a9, #0f2d3c); border:none; font-weight:700;">Lưu nhân sự</button>
                     </div>
                 </form>
             </div>
@@ -1882,24 +2023,31 @@
     <script src="../js/core/firebase-config.js"></script>
     <script src="../js/core/realtime.js"></script>
     <script src="../js/core/api.js"></script>
-    <script src="../js/core/session.js?v=20261106_v9"></script>
+    <script src="../js/core/session.js?v=20261109_v12"></script>
     <script src="../js/core/notifications.js"></script>
     <script src="../js/core/router.js"></script>
     <script src="../js/core/demo-data.js"></script>
     <script src="../js/core/app.js"></script>
     <script src="../js/map/map-controller.js"></script>
     <script src="../js/map/map-renderer.js"></script>
-    <script src="../js/admin/admin.js?v=20261106_v9"></script>
+    <script src="../js/admin/admin.js?v=20261109_v12"></script>
     <script>
         (function() {
             try {
+                var deletedUsers = new Set(JSON.parse(localStorage.getItem('goride_deleted_user_ids') || '[]'));
+                var isValid = function(item) {
+                    if (!item) return false;
+                    var id = item.id ? String(item.id).trim() : '';
+                    if (!id || id === 'undefined' || id === 'null' || deletedUsers.has(id)) return false;
+                    return true;
+                };
                 var trips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
-                var drivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
-                var users = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
-                var pending = JSON.parse(localStorage.getItem('goride_pending_drivers') || '[]');
+                var drivers = (JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]')).filter(isValid);
+                var users = (JSON.parse(localStorage.getItem('goride_offline_users') || '[]')).filter(isValid);
+                var pending = (JSON.parse(localStorage.getItem('goride_pending_drivers') || '[]')).filter(isValid);
                 var activeDrivers = drivers.filter(function(d) { return d && d.status === 'active'; }).length;
                 var revenue = trips.filter(function(t) { return t && t.status === 'completed'; }).reduce(function(sum, t) { return sum + (Number(t.fare) || 0); }, 0);
-                var cCount = Math.max(users.length, 27);
+                var cCount = users.filter(function(u) { return (u.role === 'customer' || String(u.id || '').startsWith('usr_')) && u.role !== 'admin' && !String(u.id || '').startsWith('drv_'); }).length;
                 var s = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
                 s('stat-total-rides', Number(trips.length).toLocaleString('vi-VN'));
                 s('stat-active-drivers', Number(activeDrivers).toLocaleString('vi-VN'));
@@ -1923,8 +2071,7 @@
             }
             if (typeof AdminController !== 'undefined') {
                 if (!window.adminController) window.adminController = new AdminController();
-                window.adminController.init().catch(console.error); if (false) {
-                }
+                window.adminController.init().catch(console.error);
             }
         });
     </script>

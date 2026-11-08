@@ -115,6 +115,7 @@
 
       .rtree-car-body,
       .rtree-bike-body,
+      .rtree-delivery-body,
       .rtree-premium-body,
       .rtree-car7-body {
         transition: transform 0.2s ease, filter 0.2s ease;
@@ -126,6 +127,7 @@
 
       .rtree-driver-marker:hover .rtree-car-body,
       .rtree-driver-marker:hover .rtree-bike-body,
+      .rtree-driver-marker:hover .rtree-delivery-body,
       .rtree-driver-marker:hover .rtree-premium-body,
       .rtree-driver-marker:hover .rtree-car7-body {
         transform: scale(1.15);
@@ -655,8 +657,17 @@
      */
     _resolveVehicleType(metadata = {}) {
       if (!metadata) return 'car4';
+      if (typeof metadata === 'string') {
+        const s = metadata.toLowerCase().trim();
+        if (s === 'delivery' || s.includes('giao hàng') || s.includes('giao hang') || s.includes('delivery') || s.includes('package') || s.includes('box') || s.includes('shipper')) return 'delivery';
+        if (s === 'bike' || s === 'motorbike' || s === 'moto' || s === 'scooter' || s.includes('xe máy') || s.includes('xe may') || s.includes('gobike') || s.includes('navigo bike') || s.includes('xanh sm bike') || s.includes('feliz') || s.includes('evo') || s.includes('klara')) return 'motorbike';
+        if (s === 'car7' || s === 'xl' || s === '7seats' || s.includes('7 chỗ') || s.includes('7 cho') || s.includes('7seats') || s.includes('xl')) return 'car7';
+        if (s === 'premium' || s === 'luxury' || s === 'car4_plus' || s === 'plus' || s.includes('plus') || s.includes('sang') || s.includes('luxury') || s.includes('vip')) return 'premium';
+        return 'car4';
+      }
       const candidates = [
         metadata.vehicleType,
+        metadata.iconType,
         metadata.serviceType,
         metadata.service,
         metadata.type,
@@ -669,6 +680,17 @@
         if (!val || typeof val !== 'string') continue;
         const lower = val.toLowerCase().trim();
         if (
+          lower === 'delivery' ||
+          lower.includes('giao hàng') ||
+          lower.includes('giao hang') ||
+          lower.includes('delivery') ||
+          lower.includes('package') ||
+          lower.includes('box') ||
+          lower.includes('shipper')
+        ) {
+          return 'delivery';
+        }
+        if (
           lower === 'bike' ||
           lower === 'motorbike' ||
           lower === 'moto' ||
@@ -676,7 +698,7 @@
           lower.includes('xe máy') ||
           lower.includes('xe may') ||
           lower.includes('gobike') ||
-          lower.includes('navigo bike') || lower.includes('xanh sm bike') || lower.includes('feliz') || lower.includes('evo')
+          lower.includes('navigo bike') || lower.includes('xanh sm bike') || lower.includes('feliz') || lower.includes('evo') || lower.includes('klara')
         ) {
           return 'motorbike';
         }
@@ -715,11 +737,12 @@
      * @returns {boolean}
      */
     _isBikeVehicle(metadata = {}) {
-      return this._resolveVehicleType(metadata) === 'motorbike';
+      const v = this._resolveVehicleType(metadata);
+      return v === 'motorbike' || v === 'delivery';
     }
 
     /**
-     * Creates a custom HTML DivIcon for driver marker with modern top-down vector vehicle (Motorbike, Car, Premium, Car7)
+     * Creates a custom HTML DivIcon for driver marker with modern top-down vector vehicle (Motorbike, Delivery, Car, Premium, Car7)
      * @private
      * @param {number} heading - Degrees (0 - 360)
      * @param {Object} [metadata={}]
@@ -752,32 +775,77 @@
         '#64748b'
       );
 
-      // 1. Motorbike (Navigo Bike)
+      // 1. Motorbike (Navigo Bike) - Unmistakable top-down e-scooter with exposed wheels, handlebars, mirrors, helmet with visor, dual seat
       const bikeSvg = `
-        <svg width="26" height="46" viewBox="0 0 26 46" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="11.5" y="2" width="3" height="9" rx="1.5" fill="#0f172a" />
-          <rect x="11.5" y="35" width="3" height="9" rx="1.5" fill="#0f172a" />
-          <path d="M10 6 C10 4, 16 4, 16 6 L16 12 L10 12 Z" fill="${bodyColor}" stroke="${strokeColor}" stroke-width="0.8" />
-          <path d="M5 13.5 Q13 15 21 13.5" stroke="#334155" stroke-width="2.2" stroke-linecap="round" />
-          <rect x="3.5" y="12" width="3" height="3" rx="1" fill="#0f172a" />
-          <rect x="19.5" y="12" width="3" height="3" rx="1" fill="#0f172a" />
-          <circle cx="2.5" cy="11.5" r="1.6" fill="${mirrorColor}" stroke="#1e293b" stroke-width="0.7" />
-          <circle cx="23.5" cy="11.5" r="1.6" fill="${mirrorColor}" stroke="#1e293b" stroke-width="0.7" />
-          <ellipse cx="13" cy="9.5" rx="2.2" ry="1.4" fill="#fef08a" />
-          <path d="M10 12 C10 10.5, 16 10.5, 16 12 L18 25 C18 34, 16 41, 14 43 C13.5 43.5, 12.5 43.5, 12 43 C10 41, 8 34, 8 25 Z" 
-                fill="${bodyColor}" stroke="${strokeColor}" stroke-width="1.2" />
-          <path d="M6.5 21.5 C7.5 17, 10 16, 13 16 C16 16, 18.5 17, 19.5 21.5 C17.5 24.5, 8.5 24.5, 6.5 21.5 Z" 
-                fill="${isActive ? '#047857' : '#334155'}" />
-          <path d="M7.5 19.5 L5 14" stroke="${isActive ? '#047857' : '#334155'}" stroke-width="2" stroke-linecap="round" />
-          <path d="M18.5 19.5 L21 14" stroke="${isActive ? '#047857' : '#334155'}" stroke-width="2" stroke-linecap="round" />
-          <circle cx="13" cy="20.5" r="4.2" fill="${isActive ? '#10b981' : '#f8fafc'}" stroke="${strokeColor}" stroke-width="0.9" />
-          <path d="M10 19 Q13 17 16 19" stroke="#0f172a" stroke-width="2" stroke-linecap="round" />
-          <rect x="9.5" y="25" width="7" height="13" rx="3.5" fill="#1e293b" />
-          <ellipse cx="13" cy="44" rx="2.2" ry="1.2" fill="#ef4444" />
+        <svg width="28" height="50" viewBox="0 0 28 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Front Wheel (Exposed Rubber Tire) -->
+          <rect x="12" y="1" width="4" height="9" rx="2" fill="#0f172a" />
+          <!-- Front Mudguard in bodyColor -->
+          <path d="M11 6 C11 4, 17 4, 17 6 L16.5 11 L11.5 11 Z" fill="${bodyColor}" stroke="${strokeColor}" stroke-width="0.8" />
+          <!-- Headlight (Bright Electric LED) -->
+          <ellipse cx="14" cy="9" rx="2.5" ry="1.5" fill="#fef08a" />
+          <!-- Wide Handlebars with Rubber Grips -->
+          <line x1="2" y1="13" x2="26" y2="13" stroke="#334155" stroke-width="2.6" stroke-linecap="round" />
+          <rect x="1.5" y="11.5" width="4" height="3" rx="1.2" fill="#0f172a" />
+          <rect x="22.5" y="11.5" width="4" height="3" rx="1.2" fill="#0f172a" />
+          <!-- Side Mirrors -->
+          <circle cx="2" cy="10" r="1.8" fill="${mirrorColor}" stroke="#1e293b" stroke-width="0.7" />
+          <circle cx="26" cy="10" r="1.8" fill="${mirrorColor}" stroke="#1e293b" stroke-width="0.7" />
+          <!-- Scooter Front Shield / Fairing -->
+          <path d="M9.5 12.5 L18.5 12.5 L17.5 20 L10.5 20 Z" fill="${bodyColor}" stroke="${strokeColor}" stroke-width="0.8" />
+          <!-- Rider Shoulders in Jacket -->
+          <path d="M7.5 20.5 C8.5 17.5, 11 17, 14 17 C17 17, 19.5 17.5, 20.5 20.5 L19.5 25.5 Q14 24.5 8.5 25.5 Z" 
+                fill="#0f2d3c" stroke="#1e293b" stroke-width="0.6" />
+          <!-- Rider Arms to Handlebars -->
+          <line x1="8.5" y1="20" x2="4.5" y2="13.5" stroke="#0f2d3c" stroke-width="2.2" stroke-linecap="round" />
+          <line x1="19.5" y1="20" x2="23.5" y2="13.5" stroke="#0f2d3c" stroke-width="2.2" stroke-linecap="round" />
+          <!-- Rider Helmet with High-Contrast Tinted Visor -->
+          <circle cx="14" cy="21" r="4.5" fill="#ffffff" stroke="#0f172a" stroke-width="1.2" />
+          <path d="M10.2 19.8 Q14 16.5 17.8 19.8" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" fill="none" />
+          <ellipse cx="14" cy="21" rx="1.6" ry="1" fill="${bodyColor}" />
+          <!-- Scooter Dual Seat -->
+          <rect x="10" y="26" width="8" height="13" rx="4" fill="#1e293b" stroke="#334155" stroke-width="0.7" />
+          <line x1="10.5" y1="32.5" x2="17.5" y2="32.5" stroke="#475569" stroke-width="0.8" />
+          <!-- Rear Grab Bar / Rack -->
+          <path d="M9.5 38 Q14 41.5 18.5 38" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" fill="none" />
+          <!-- Rear Wheel & Taillight -->
+          <rect x="12" y="39.5" width="4" height="9" rx="2" fill="#0f172a" />
+          <ellipse cx="14" cy="47.5" rx="2.4" ry="1.3" fill="#ef4444" />
         </svg>
       `;
 
-      // 2. 4-Seater Sedan (Navigo Car)
+      // 2. Delivery Motorbike (Navigo Delivery) - Motorbike with Insulated Cargo Box on Rear
+      const deliverySvg = `
+        <svg width="28" height="50" viewBox="0 0 28 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Front Wheel -->
+          <rect x="12" y="1" width="4" height="9" rx="2" fill="#0f172a" />
+          <path d="M11 6 C11 4, 17 4, 17 6 L16.5 11 L11.5 11 Z" fill="${bodyColor}" stroke="${strokeColor}" stroke-width="0.8" />
+          <ellipse cx="14" cy="9" rx="2.5" ry="1.5" fill="#fef08a" />
+          <!-- Wide Handlebars with Grips & Mirrors -->
+          <line x1="2" y1="13" x2="26" y2="13" stroke="#334155" stroke-width="2.6" stroke-linecap="round" />
+          <rect x="1.5" y="11.5" width="4" height="3" rx="1.2" fill="#0f172a" />
+          <rect x="22.5" y="11.5" width="4" height="3" rx="1.2" fill="#0f172a" />
+          <circle cx="2" cy="10" r="1.8" fill="${mirrorColor}" stroke="#1e293b" stroke-width="0.7" />
+          <circle cx="26" cy="10" r="1.8" fill="${mirrorColor}" stroke="#1e293b" stroke-width="0.7" />
+          <path d="M9.5 12.5 L18.5 12.5 L17.5 20 L10.5 20 Z" fill="${bodyColor}" stroke="${strokeColor}" stroke-width="0.8" />
+          <!-- Rider -->
+          <path d="M7.5 20.5 C8.5 17.5, 11 17, 14 17 C17 17, 19.5 17.5, 20.5 20.5 L19.5 25.5 Q14 24.5 8.5 25.5 Z" fill="#0f2d3c" />
+          <line x1="8.5" y1="20" x2="4.5" y2="13.5" stroke="#0f2d3c" stroke-width="2.2" stroke-linecap="round" />
+          <line x1="19.5" y1="20" x2="23.5" y2="13.5" stroke="#0f2d3c" stroke-width="2.2" stroke-linecap="round" />
+          <circle cx="14" cy="21" r="4.5" fill="#ffffff" stroke="#0f172a" stroke-width="1.2" />
+          <path d="M10.2 19.8 Q14 16.5 17.8 19.8" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" fill="none" />
+          <!-- Delivery Cargo Carrier Box (Signature Yellow/Amber Box) -->
+          <rect x="7" y="26" width="14" height="13" rx="2.5" fill="#f59e0b" stroke="#b45309" stroke-width="1" />
+          <line x1="7" y1="30" x2="21" y2="30" stroke="#b45309" stroke-width="0.8" />
+          <rect x="12.5" y="29" width="3" height="2" rx="0.5" fill="#ffffff" />
+          <line x1="14" y1="26" x2="14" y2="39" stroke="#d97706" stroke-width="1.2" />
+          <!-- Rear Wheel & Taillight -->
+          <rect x="12" y="39.5" width="4" height="9" rx="2" fill="#0f172a" />
+          <ellipse cx="14" cy="47.5" rx="2.4" ry="1.3" fill="#ef4444" />
+        </svg>
+      `;
+
+      // 3. 4-Seater Sedan (Navigo Car)
       const carSvg = `
         <svg width="26" height="46" viewBox="0 0 26 46" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="0.5" y="8" width="2.5" height="7" rx="1.2" fill="#1e293b" />
@@ -800,7 +868,7 @@
         </svg>
       `;
 
-      // 3. Luxury Sedan (Navigo Plus) - Panoramic Sunroof & Sleek Obsidian Finish
+      // 4. Luxury Sedan (Navigo Plus) - Panoramic Sunroof & Sleek Obsidian Finish
       const premiumSvg = `
         <svg width="28" height="48" viewBox="0 0 28 48" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="0.5" y="8" width="2.5" height="7.5" rx="1.2" fill="#0f172a" />
@@ -830,7 +898,7 @@
         </svg>
       `;
 
-      // 4. 7-Seater MPV / SUV (Navigo XL) - Extended Body & Roof Rails
+      // 5. 7-Seater MPV / SUV (Navigo XL) - Extended Body & Roof Rails
       const car7Svg = `
         <svg width="28" height="52" viewBox="0 0 28 52" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="0.5" y="9" width="2.5" height="8" rx="1.2" fill="#0f172a" />
@@ -869,6 +937,9 @@
       if (vType === 'motorbike') {
         selectedSvg = bikeSvg;
         bodyClass = 'rtree-bike-body';
+      } else if (vType === 'delivery') {
+        selectedSvg = deliverySvg;
+        bodyClass = 'rtree-delivery-body';
       } else if (vType === 'premium') {
         selectedSvg = premiumSvg;
         bodyClass = 'rtree-premium-body';
@@ -1057,9 +1128,9 @@
       });
 
       const vType = this._resolveVehicleType(metadata);
-      const isBike = (vType === 'motorbike');
-      const vDetails = (vType === 'motorbike' ? 'Xe máy điện (Navigo Bike)' : (vType === 'car7' ? 'Ô tô 7 chỗ (Navigo Taxi 7 chỗ)' : (vType === 'premium' ? 'Xe sang (Navigo Luxury)' : 'Ô tô điện (Navigo Car)')));
-      const vEmoji = (vType === 'motorbike' ? '🛵' : (vType === 'car7' ? '🚐' : (vType === 'premium' ? '🚘' : '🚗')));
+      const isBike = (vType === 'motorbike' || vType === 'delivery');
+      const vDetails = (vType === 'motorbike' ? 'Xe máy điện (Navigo Bike)' : (vType === 'car7' ? 'Ô tô 7 chỗ (Navigo Taxi 7 chỗ)' : (vType === 'premium' ? 'Xe sang (Navigo Luxury)' : (vType === 'delivery' ? 'Giao hàng (Navigo Delivery)' : 'Ô tô điện (Navigo Car)'))));
+      const vEmoji = (vType === 'motorbike' ? '🛵' : (vType === 'car7' ? '🚐' : (vType === 'premium' ? '🚘' : (vType === 'delivery' ? '📦' : '🚗'))));
       const driverName = metadata.name || `Tài xế #${driverKey}`;
       const driverVehicle = metadata.vehicle || `${vEmoji} ${vDetails}`;
       const statusText = metadata.status ? `<div style="font-size:11px;color:#38bdf8;margin-top:2px;">Trạng thái: ${metadata.status}</div>` : '';
@@ -1087,6 +1158,8 @@
       marker._currentHeading = heading;
       marker._continuousHeading = heading;
       marker._driverData = metadata;
+      marker._renderedVehicleType = vType;
+      marker._renderedIsActive = !!(metadata && (metadata.isActive || metadata.id === 'active_driver'));
 
       this.markers.drivers.set(driverKey, marker);
       return marker;
@@ -1119,13 +1192,41 @@
 
       // Update metadata
       if (metadata) {
-        const hadActive = marker._driverData && marker._driverData.isActive;
-        const prevVType = this._resolveVehicleType(marker._driverData);
+        const prevVType = marker._renderedVehicleType || this._resolveVehicleType(marker._driverData);
+        const prevIsActive = marker._renderedIsActive !== undefined ? marker._renderedIsActive : !!(marker._driverData && marker._driverData.isActive);
         marker._driverData = Object.assign(marker._driverData || {}, metadata);
         const newVType = this._resolveVehicleType(marker._driverData);
+        const newIsActive = !!(marker._driverData.isActive || driverKey === 'active_driver');
         // If active state changed or vehicle type changed, re-render icon
-        if ((!hadActive && marker._driverData.isActive) || (prevVType !== newVType)) {
-          marker.setIcon(this._createDriverIcon(heading, marker._driverData));
+        if ((prevVType !== newVType) || (prevIsActive !== newIsActive)) {
+          marker._renderedVehicleType = newVType;
+          marker._renderedIsActive = newIsActive;
+          marker.setIcon(this._createDriverIcon(marker._continuousHeading || heading, marker._driverData));
+        }
+
+        // Dynamically update popup content with refreshed vehicle info
+        if (metadata.name || metadata.vehicle || metadata.vehicleType || metadata.status) {
+          const vDetails = (newVType === 'motorbike' ? 'Xe máy điện (Navigo Bike)' : (newVType === 'car7' ? 'Ô tô 7 chỗ (Navigo Taxi 7 chỗ)' : (newVType === 'premium' ? 'Xe sang (Navigo Luxury)' : (newVType === 'delivery' ? 'Giao hàng (Navigo Delivery)' : 'Ô tô điện (Navigo Car)'))));
+          const vEmoji = (newVType === 'motorbike' ? '🛵' : (newVType === 'car7' ? '🚐' : (newVType === 'premium' ? '🚘' : (newVType === 'delivery' ? '📦' : '🚗'))));
+          const driverName = marker._driverData.name || `Tài xế #${driverKey}`;
+          const driverVehicle = marker._driverData.vehicle || `${vEmoji} ${vDetails}`;
+          const statusText = marker._driverData.status ? `<div style="font-size:11px;color:#38bdf8;margin-top:2px;">Trạng thái: ${marker._driverData.status}</div>` : '';
+          const numLat = Number(lat);
+          const numLng = Number(lng);
+          const latText = !isNaN(numLat) ? numLat.toFixed(5) : lat;
+          const lngText = !isNaN(numLng) ? numLng.toFixed(5) : lng;
+
+          const popupHtml = `
+            <div class="rtree-popup-title" style="color: #10b981;">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;"></span>
+              ${driverName}
+            </div>
+            <div class="rtree-popup-sub">${driverVehicle}</div>
+            <div class="rtree-popup-sub">Tọa độ: ${latText}, ${lngText}</div>
+            <div class="rtree-popup-sub">Góc hướng: ${Math.round(heading || 0)}°</div>
+            ${statusText}
+          `;
+          marker.setPopupContent(popupHtml);
         }
       }
 
@@ -1211,7 +1312,6 @@
         }).addTo(this.map);
       } else {
         this.markers.userLocation.setLatLng([numLat, numLng]);
-      this.trimActiveRoutes(numLat, numLng);
       }
 
       if (accuracy && accuracy > 0 && accuracy < 500) {
@@ -1461,20 +1561,22 @@
      * Trims a polyline geometry relative to the current vehicle position [curLat, curLng].
      * Acts like a "snake eating the path": segments behind the vehicle are discarded,
      * and the remaining polyline connects seamlessly from [curLat, curLng] onward to the destination.
+     * If the vehicle is off-route (> 75 meters away from the polyline), preserves the polyline
+     * intact and returns isOffRoute: true so an intelligent road reroute can be triggered.
      * @param {Array<[number, number]>} fullCoords - The full original route coordinates
      * @param {number} curLat - Current vehicle latitude
      * @param {number} curLng - Current vehicle longitude
      * @param {number} [lastIndex=0] - The last known progression index to prevent backtracking
-     * @returns {{ remainingCoords: Array<[number, number]>, newIndex: number }}
+     * @returns {{ isOffRoute: boolean, reachedEnd?: boolean, distMeters: number, remainingCoords: Array<[number, number]>, newIndex: number }}
      */
     _computeTrimmedRoute(fullCoords, curLat, curLng, lastIndex = 0) {
       if (!Array.isArray(fullCoords) || fullCoords.length < 2) {
-        return { remainingCoords: fullCoords || [], newIndex: 0 };
+        return { isOffRoute: false, distMeters: 0, remainingCoords: fullCoords || [], newIndex: 0 };
       }
       const cLat = Number(curLat);
       const cLng = Number(curLng);
       if (isNaN(cLat) || isNaN(cLng) || cLat === 0 || cLng === 0) {
-        return { remainingCoords: fullCoords, newIndex: lastIndex };
+        return { isOffRoute: false, distMeters: 0, remainingCoords: fullCoords, newIndex: lastIndex };
       }
 
       const cosLat = Math.cos((cLat * Math.PI) / 180);
@@ -1516,31 +1618,56 @@
         }
       }
 
+      // Convert best minimum distance squared to real meters (1 deg latitude ~ 111,320m)
+      const bestDistMeters = Math.sqrt(Math.max(0, bestDistSq)) * 111320;
+
+      // OFF-ROUTE GUARD: If closest distance to the route is greater than 75 meters,
+      // the vehicle has deviated / taken another road!
+      // NEVER collapse the route into a diagonal 2-point line across the city!
+      // Return isOffRoute: true and preserve all route coordinates intact!
+      if (bestDistMeters > 75) {
+        return {
+          isOffRoute: true,
+          reachedEnd: false,
+          distMeters: bestDistMeters,
+          remainingCoords: fullCoords,
+          newIndex: lastIndex
+        };
+      }
+
       // If vehicle is before first point
       if (bestSegmentIdx === 0 && bestT < 0.05) {
         return {
+          isOffRoute: false,
+          reachedEnd: false,
+          distMeters: bestDistMeters,
           remainingCoords: [[cLat, cLng], ...fullCoords],
           newIndex: 0
         };
       }
 
-      // Check if reached destination (within ~20 meters of end)
+      // Check if reached destination (within ~25 meters of end)
       const lastPoint = fullCoords[fullCoords.length - 1];
       const endDx = (cLng - lastPoint[1]) * cosLat;
       const endDy = cLat - lastPoint[0];
-      const distToEndSq = endDx * endDx + endDy * endDy;
-      if (bestSegmentIdx >= fullCoords.length - 2 && distToEndSq < 3.5e-8) {
+      const distToEndMeters = Math.sqrt(endDx * endDx + endDy * endDy) * 111320;
+      if (bestSegmentIdx >= fullCoords.length - 2 && distToEndMeters < 25) {
         return {
+          isOffRoute: false,
+          reachedEnd: true,
+          distMeters: bestDistMeters,
           remainingCoords: [[cLat, cLng], lastPoint],
           newIndex: fullCoords.length - 1
         };
       }
 
       const remaining = [[cLat, cLng]];
-      // If projection is on the segment and distinct from curPos (> ~3.5 meters), snap through it
+      // If projection is on the segment and distinct from curPos (> ~4 meters), snap through it
       if (bestProj && bestT > 0.05 && bestT < 0.95) {
-        const projToCurSq = Math.pow((cLng - bestProj[1]) * cosLat, 2) + Math.pow(cLat - bestProj[0], 2);
-        if (projToCurSq > 1e-9) {
+        const projDx = (cLng - bestProj[1]) * cosLat;
+        const projDy = cLat - bestProj[0];
+        const projDistMeters = Math.sqrt(projDx * projDx + projDy * projDy) * 111320;
+        if (projDistMeters > 4) {
           remaining.push(bestProj);
         }
       }
@@ -1554,6 +1681,9 @@
       }
 
       return {
+        isOffRoute: false,
+        reachedEnd: false,
+        distMeters: bestDistMeters,
         remainingCoords: remaining,
         newIndex: Math.max(lastIndex, bestSegmentIdx)
       };
@@ -1561,96 +1691,116 @@
 
     /**
      * Dynamically trims the driver route (blue line: driver -> pickup) as the vehicle moves forward.
-     * Segments behind the vehicle disappear ("eaten away like a snake"), while the remaining polyline
+     * Segments behind the vehicle disappear smoothly ("eaten away like a snake"), while the remaining polyline
      * connects seamlessly from the vehicle's current position to the pickup point.
      * @param {number} curLat
      * @param {number} curLng
-     * @returns {boolean}
+     * @returns {{ trimmed: boolean, isOffRoute: boolean, distMeters?: number, reachedEnd?: boolean }}
      */
     trimDriverRoute(curLat, curLng) {
       if (!this.driverRoutePolyline || !Array.isArray(this._originalDriverRouteCoords) || this._originalDriverRouteCoords.length < 2) {
-        return false;
+        return { trimmed: false, isOffRoute: false };
       }
       const cLat = Number(curLat);
       const cLng = Number(curLng);
-      if (isNaN(cLat) || isNaN(cLng) || cLat === 0 || cLng === 0) return false;
+      if (isNaN(cLat) || isNaN(cLng) || cLat === 0 || cLng === 0) {
+        return { trimmed: false, isOffRoute: false };
+      }
 
-      const { remainingCoords, newIndex } = this._computeTrimmedRoute(
+      const res = this._computeTrimmedRoute(
         this._originalDriverRouteCoords,
         cLat,
         cLng,
         this._driverRouteProgressIndex || 0
       );
 
-      this._driverRouteProgressIndex = newIndex;
+      if (res.isOffRoute) {
+        return { trimmed: false, isOffRoute: true, distMeters: res.distMeters };
+      }
 
-      if (remainingCoords && remainingCoords.length >= 2) {
-        if (remainingCoords.length === 2) {
-          const p1 = remainingCoords[0];
-          const p2 = remainingCoords[1];
+      this._driverRouteProgressIndex = res.newIndex;
+
+      if (res.reachedEnd) {
+        this.clearDriverRoute();
+        return { trimmed: true, isOffRoute: false, reachedEnd: true };
+      }
+
+      if (res.remainingCoords && res.remainingCoords.length >= 2) {
+        if (res.remainingCoords.length === 2) {
+          const p1 = res.remainingCoords[0];
+          const p2 = res.remainingCoords[1];
           const cos = Math.cos((p1[0] * Math.PI) / 180);
-          const dSq = Math.pow((p1[1] - p2[1]) * cos, 2) + Math.pow(p1[0] - p2[0], 2);
-          if (dSq < 2e-8) {
+          const dMeters = Math.hypot((p1[1] - p2[1]) * cos, p1[0] - p2[0]) * 111320;
+          if (dMeters < 15) {
             this.clearDriverRoute();
-            return true;
+            return { trimmed: true, isOffRoute: false, reachedEnd: true };
           }
         }
-        this.driverRoutePolyline.setLatLngs(remainingCoords);
-        return true;
-      } else if (remainingCoords && remainingCoords.length <= 1) {
+        this.driverRoutePolyline.setLatLngs(res.remainingCoords);
+        return { trimmed: true, isOffRoute: false };
+      } else {
         this.clearDriverRoute();
-        return true;
+        return { trimmed: true, isOffRoute: false, reachedEnd: true };
       }
-      return false;
     }
 
     /**
      * Dynamically trims the main trip route (green / teal line) as the vehicle moves forward.
-     * Segments behind the vehicle disappear ("eaten away like a snake"), while the remaining polyline
+     * Segments behind the vehicle disappear smoothly ("eaten away like a snake"), while the remaining polyline
      * connects seamlessly from the vehicle's current position to the destination.
      * @param {number} curLat
      * @param {number} curLng
-     * @returns {boolean}
+     * @returns {{ trimmed: boolean, isOffRoute: boolean, distMeters?: number, reachedEnd?: boolean }}
      */
     trimRoute(curLat, curLng) {
       // Guard: Never trim the main trip route while the driver approach route to pickup is active
       if (this.driverRoutePolyline) {
-        return false;
+        return { trimmed: false, isOffRoute: false };
       }
       if (!this.routePolyline || !Array.isArray(this._originalRouteCoords) || this._originalRouteCoords.length < 2) {
-        return false;
+        return { trimmed: false, isOffRoute: false };
       }
       const cLat = Number(curLat);
       const cLng = Number(curLng);
-      if (isNaN(cLat) || isNaN(cLng) || cLat === 0 || cLng === 0) return false;
+      if (isNaN(cLat) || isNaN(cLng) || cLat === 0 || cLng === 0) {
+        return { trimmed: false, isOffRoute: false };
+      }
 
-      const { remainingCoords, newIndex } = this._computeTrimmedRoute(
+      const res = this._computeTrimmedRoute(
         this._originalRouteCoords,
         cLat,
         cLng,
         this._routeProgressIndex || 0
       );
 
-      this._routeProgressIndex = newIndex;
+      if (res.isOffRoute) {
+        return { trimmed: false, isOffRoute: true, distMeters: res.distMeters };
+      }
 
-      if (remainingCoords && remainingCoords.length >= 2) {
-        if (remainingCoords.length === 2) {
-          const p1 = remainingCoords[0];
-          const p2 = remainingCoords[1];
+      this._routeProgressIndex = res.newIndex;
+
+      if (res.reachedEnd) {
+        this.clearRoute();
+        return { trimmed: true, isOffRoute: false, reachedEnd: true };
+      }
+
+      if (res.remainingCoords && res.remainingCoords.length >= 2) {
+        if (res.remainingCoords.length === 2) {
+          const p1 = res.remainingCoords[0];
+          const p2 = res.remainingCoords[1];
           const cos = Math.cos((p1[0] * Math.PI) / 180);
-          const dSq = Math.pow((p1[1] - p2[1]) * cos, 2) + Math.pow(p1[0] - p2[0], 2);
-          if (dSq < 2e-8) {
+          const dMeters = Math.hypot((p1[1] - p2[1]) * cos, p1[0] - p2[0]) * 111320;
+          if (dMeters < 15) {
             this.clearRoute();
-            return true;
+            return { trimmed: true, isOffRoute: false, reachedEnd: true };
           }
         }
-        this.routePolyline.setLatLngs(remainingCoords);
-        return true;
-      } else if (remainingCoords && remainingCoords.length <= 1) {
+        this.routePolyline.setLatLngs(res.remainingCoords);
+        return { trimmed: true, isOffRoute: false };
+      } else {
         this.clearRoute();
-        return true;
+        return { trimmed: true, isOffRoute: false, reachedEnd: true };
       }
-      return false;
     }
 
     /**
@@ -1658,9 +1808,9 @@
      * @param {number} curLat
      * @param {number} curLng
      * @param {Object} [metadata={}]
+     * @returns {{ trimmed: boolean, isOffRoute: boolean, distMeters?: number }}
      */
     trimActiveRoutes(curLat, curLng, metadata = {}) {
-      let trimmed = false;
       const status = (metadata && (metadata.status || metadata.tripStatus))
         ? String(metadata.status || metadata.tripStatus).toUpperCase()
         : null;
@@ -1668,14 +1818,58 @@
       // When driver is approaching pickup (driverRoutePolyline exists or status is ACCEPTED/ARRIVED),
       // ONLY trim the approach route! NEVER touch or trim the main trip route!
       if (this.driverRoutePolyline && this._originalDriverRouteCoords) {
-        trimmed = this.trimDriverRoute(curLat, curLng) || trimmed;
+        return this.trimDriverRoute(curLat, curLng);
       } else if (this.routePolyline && this._originalRouteCoords) {
         // ONLY trim the main trip route if the trip is active/in-progress and NOT in approach/accepted/arrived stage
         if (status !== 'ACCEPTED' && status !== 'ARRIVED' && status !== 'REQUESTED' && status !== 'OFFERED') {
-          trimmed = this.trimRoute(curLat, curLng) || trimmed;
+          return this.trimRoute(curLat, curLng);
         }
       }
-      return trimmed;
+      return { trimmed: false, isOffRoute: false };
+    }
+
+    /**
+     * Smoothly updates main route geometry with newly calculated coordinates without re-creating layer
+     */
+    updateRouteGeometry(newCoords, options = {}) {
+      if (!this.map || !Array.isArray(newCoords) || newCoords.length < 2) return null;
+      const normalized = newCoords
+        .map(c => Array.isArray(c) ? [Number(c[0]), Number(c[1])] : (c ? [Number(c.lat || c.latitude), Number(c.lng || c.lon || c.longitude)] : null))
+        .filter(c => Array.isArray(c) && !isNaN(c[0]) && !isNaN(c[1]) && c[0] !== 0);
+      if (normalized.length < 2) return null;
+
+      this._originalRouteCoords = normalized;
+      this._routeProgressIndex = 0;
+      if (this.routePolyline) {
+        this.routePolyline.setLatLngs(normalized);
+        if (options && typeof options === 'object' && Object.keys(options).length > 0) {
+          this.routePolyline.setStyle(options);
+        }
+        return this.routePolyline;
+      }
+      return this.drawRoute(normalized, options);
+    }
+
+    /**
+     * Smoothly updates driver approach route geometry with newly calculated coordinates without re-creating layer
+     */
+    updateDriverRouteGeometry(newCoords, options = {}) {
+      if (!this.map || !Array.isArray(newCoords) || newCoords.length < 2) return null;
+      const normalized = newCoords
+        .map(c => Array.isArray(c) ? [Number(c[0]), Number(c[1])] : (c ? [Number(c.lat || c.latitude), Number(c.lng || c.lon || c.longitude)] : null))
+        .filter(c => Array.isArray(c) && !isNaN(c[0]) && !isNaN(c[1]) && c[0] !== 0);
+      if (normalized.length < 2) return null;
+
+      this._originalDriverRouteCoords = normalized;
+      this._driverRouteProgressIndex = 0;
+      if (this.driverRoutePolyline) {
+        this.driverRoutePolyline.setLatLngs(normalized);
+        if (options && typeof options === 'object' && Object.keys(options).length > 0) {
+          this.driverRoutePolyline.setStyle(options);
+        }
+        return this.driverRoutePolyline;
+      }
+      return this.drawDriverRoute(normalized, options);
     }
 
     clearDriverRoute() {

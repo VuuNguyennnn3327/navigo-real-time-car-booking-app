@@ -233,8 +233,9 @@
                         if (user && user.phone) {
                             const dp = normalizePhone(user.phone);
                             if (dp) return dp;
+                        } else if (user && user.id) {
+                            return user.id;
                         }
-                        return '0918765432';
                     }
                 } catch(e) {}
             }
@@ -242,7 +243,8 @@
             if (!user) return null;
             const uPhone = normalizePhone(user.phone);
             if (uPhone) return uPhone;
-            return user.role === 'driver' ? '0918765432' : '0901234567';
+            if (user.id) return user.id;
+            return null;
         },
 
         setActivePhone(phone) {
@@ -253,67 +255,65 @@
         },
 
         getWallet(phone) {
+            if (!phone) return null;
             const wallets = this.getAllWallets();
-            const cleanPhone = normalizePhone(phone);
-            if (!cleanPhone) return null;
-            if (wallets[cleanPhone]) return wallets[cleanPhone];
-            // Match against any wallet entry whose digits match
+            const cleanStr = String(phone).trim();
+            const cleanPhone = normalizePhone(cleanStr);
+            if (cleanPhone && wallets[cleanPhone]) return wallets[cleanPhone];
+            if (wallets[cleanStr]) return wallets[cleanStr];
+
+            // Match against any wallet entry whose digits match or userId matches
             for (const key of Object.keys(wallets)) {
-                if (normalizePhone(key) === cleanPhone) {
-                    return wallets[key];
+                const w = wallets[key];
+                if (!w || typeof w !== 'object') continue;
+                if (cleanPhone && normalizePhone(key) === cleanPhone) {
+                    return w;
+                }
+                if (cleanPhone && w.accountNumber && normalizePhone(w.accountNumber) === cleanPhone) {
+                    return w;
+                }
+                if (w.userId && String(w.userId) === cleanStr) {
+                    return w;
                 }
             }
             return null;
         },
 
         getCurrentWallet() {
+            const user = this.getCurrentUser();
             const phone = this.getActivePhone();
-            if (!phone) return null;
-            let wallet = this.getWallet(phone);
+            if (!phone && !user) return null;
 
-            // If user exists but wallet not initialized in storage, create initialized wallet starting with 0 VND
+            const identifier = phone || (user ? (user.phone || user.id) : null);
+            if (!identifier) return null;
+
+            let wallet = this.getWallet(identifier);
+
+            // If user exists but wallet not initialized in storage, create initialized wallet starting with 0 VND and clean empty transactions
             if (!wallet) {
-                const user = this.getCurrentUser();
                 const rawName = user ? (user.name || user.fullName || '') : '';
-                const role = (phone === '0918765432' || (user && user.role === 'driver')) ? 'driver' : 'customer';
-                const defaultName = role === 'driver' ? 'TRAN VAN BINH' : 'NGUYEN VAN AN';
+                const role = (user && user.role === 'driver') ? 'driver' : 'customer';
+                const defaultName = role === 'driver' ? 'TAI XE DOI TAC NAVIGO' : 'KHACH HANG NAVIGO';
                 const cleanName = removeVietnameseTones(rawName) || defaultName;
-                
-                // Real starting balance: default starts at 0 ₫ (ignore stale mock 500000 or 1250000)
-                let seedBal = 0;
-                if (user && user.role === role && typeof user.walletBalance === 'number' && user.walletBalance > 0 && 
-                    user.walletBalance !== 500000 && user.walletBalance !== 1250000 && 
-                    user.walletBalance !== 350000 && user.walletBalance !== 1450000) {
-                    seedBal = user.walletBalance;
-                }
+                const accNum = (user && user.phone) ? normalizePhone(user.phone) : (normalizePhone(identifier) || identifier);
 
                 wallet = {
-                    accountNumber: phone,
+                    accountNumber: accNum,
+                    userId: user ? user.id : null,
+                    userEmail: user ? user.email : null,
                     fullName: cleanName,
-                    balance: seedBal,
+                    balance: 0,
                     activated: true,
                     role: role,
                     createdAt: new Date().toISOString(),
-                    transactions: seedBal > 0 ? [
-                        {
-                            id: 'TXN_INIT_' + phone,
-                            type: 'activation',
-                            title: 'Khởi tạo ví NaviPay',
-                            amount: seedBal,
-                            balanceAfter: seedBal,
-                            description: `Ví chính chủ ${cleanName} đã được định danh và kích hoạt thành công`,
-                            timestamp: new Date().toISOString(),
-                            status: 'success'
-                        }
-                    ] : []
+                    transactions: [] // Strictly isolated and empty for new accounts
                 };
                 const wallets = this.getAllWallets();
-                wallets[phone] = wallet;
+                wallets[accNum || identifier] = wallet;
                 this._saveAllWallets(wallets, false);
             }
 
             // Sync user session walletBalance with current wallet balance if matching role
-            const user = this.getCurrentUser();
             if (user && ((wallet.role === 'driver' && user.role === 'driver') || (wallet.role === 'customer' && user.role !== 'driver'))) {
                 if (user.walletBalance !== wallet.balance) {
                     user.walletBalance = wallet.balance;
@@ -434,8 +434,8 @@
             try {
                 const curUser = this.getCurrentUser();
                 if (curUser) {
-                    const uPhone = normalizePhone(curUser.phone) || (curUser.role === 'driver' ? '0918765432' : '0901234567');
-                    if (uPhone === cleanPhone) {
+                    const uPhone = normalizePhone(curUser.phone) || curUser.id;
+                    if (uPhone && (uPhone === cleanPhone || (curUser.id && String(curUser.id) === String(cleanPhone)))) {
                         curUser.walletBalance = wallet.balance;
                         localStorage.setItem('goride_user', JSON.stringify(curUser));
                         localStorage.setItem('navigo_user', JSON.stringify(curUser));
@@ -500,8 +500,8 @@
             try {
                 const curUser = this.getCurrentUser();
                 if (curUser) {
-                    const uPhone = normalizePhone(curUser.phone) || (curUser.role === 'driver' ? '0918765432' : '0901234567');
-                    if (uPhone === cleanPhone) {
+                    const uPhone = normalizePhone(curUser.phone) || curUser.id;
+                    if (uPhone && (uPhone === cleanPhone || (curUser.id && String(curUser.id) === String(cleanPhone)))) {
                         curUser.walletBalance = wallet.balance;
                         localStorage.setItem('goride_user', JSON.stringify(curUser));
                         localStorage.setItem('navigo_user', JSON.stringify(curUser));
@@ -627,8 +627,8 @@
             try {
                 const curUser = this.getCurrentUser();
                 if (curUser) {
-                    const uPhone = normalizePhone(curUser.phone) || (curUser.role === 'driver' ? '0918765432' : '0901234567');
-                    if (uPhone === cleanPhone || curUser.role === 'driver') {
+                    const uPhone = normalizePhone(curUser.phone) || curUser.id;
+                    if (uPhone && (uPhone === cleanPhone || (curUser.id && String(curUser.id) === String(cleanPhone)))) {
                         curUser.walletBalance = wallet.balance;
                         localStorage.setItem('goride_user', JSON.stringify(curUser));
                         localStorage.setItem('navigo_user', JSON.stringify(curUser));
@@ -715,15 +715,15 @@
             try {
                 const curUser = this.getCurrentUser();
                 if (curUser) {
-                    const uPhone = normalizePhone(curUser.phone) || (curUser.role === 'driver' ? '0918765432' : '0901234567');
-                    if (uPhone === tPhone) {
+                    const uPhone = normalizePhone(curUser.phone) || curUser.id;
+                    if (uPhone && (uPhone === tPhone || (curUser.id && String(curUser.id) === String(tPhone)))) {
                         curUser.walletBalance = receiverWallet.balance;
                         localStorage.setItem('goride_user', JSON.stringify(curUser));
                         localStorage.setItem('navigo_user', JSON.stringify(curUser));
                         if (typeof window.sessionManager !== 'undefined' && window.sessionManager.currentUser) {
                             window.sessionManager.currentUser.walletBalance = receiverWallet.balance;
                         }
-                    } else if (uPhone === fPhone) {
+                    } else if (uPhone && (uPhone === fPhone || (curUser.id && String(curUser.id) === String(fPhone)))) {
                         curUser.walletBalance = senderWallet.balance;
                         localStorage.setItem('goride_user', JSON.stringify(curUser));
                         localStorage.setItem('navigo_user', JSON.stringify(curUser));
@@ -910,8 +910,8 @@
             try {
                 const curUser = this.getCurrentUser();
                 if (curUser) {
-                    const uPhone = normalizePhone(curUser.phone) || (curUser.role === 'driver' ? '0918765432' : '0901234567');
-                    if (uPhone === cleanPhone) {
+                    const uPhone = normalizePhone(curUser.phone) || curUser.id;
+                    if (uPhone && (uPhone === cleanPhone || (curUser.id && String(curUser.id) === String(cleanPhone)))) {
                         curUser.walletBalance = wallet.balance;
                         localStorage.setItem('goride_user', JSON.stringify(curUser));
                         localStorage.setItem('navigo_user', JSON.stringify(curUser));
