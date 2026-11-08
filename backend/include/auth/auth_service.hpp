@@ -91,6 +91,12 @@ public:
     // List drivers waiting for admin approval
     std::vector<User> get_pending_drivers() const;
 
+    // Admin action: cleanly delete user by id, email, or phone (cascades drivers, sessions, backup)
+    bool delete_user(const std::string& id, const std::string& email = "", const std::string& phone = "");
+
+    // Export current SQLite users to JSON backup
+    void sync_backup_json();
+
     // Helper: count registered users
     size_t user_count() const;
 
@@ -119,7 +125,6 @@ private:
     void seed_default_accounts();
     void import_legacy_json_if_needed();
     void backup_legacy_json();
-    void sync_backup_json();
 
     static std::string normalize_email(const std::string& email);
     static std::string current_iso_time();

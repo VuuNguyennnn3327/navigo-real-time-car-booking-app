@@ -112,15 +112,9 @@ class DriverController {
     this.restoreSavedDriverLocation();
     this.switchTab(targetTab);
 
-    // 2. Map initialization: if switchTab didn't initialize map yet, initialize it cleanly once
-    if (!this.mapController) {
-      if (targetTab === 'home') {
-        this.initMap();
-      } else {
-        setTimeout(() => {
-          if (!this.mapController) this.initMap();
-        }, 350);
-      }
+    // 2. Map initialization: initialize map immediately if starting on 'home' tab
+    if (!this.mapController && targetTab === 'home') {
+      this.initMap();
     }
     this.bindEvents();
     await this.loadDriverProfileAndStats();
@@ -710,11 +704,19 @@ class DriverController {
         user = JSON.parse(localStorage.getItem('goride_user') || 'null');
       } catch (e) {}
     }
-    const rawType = user?.vehicle?.type || user?.vehicleType || this.driverStats?.vehicleType || 'motorbike';
+    const savedDriverVType = localStorage.getItem('goride_driver_vehicle_type');
+    const rawType = savedDriverVType ||
+                    user?.vehicle?.type || 
+                    user?.vehicleType || 
+                    user?.vehicle_type || 
+                    (typeof user?.vehicle === 'string' ? user.vehicle : null) || 
+                    this.driverStats?.vehicleType || 
+                    'car4';
     return this.normalizeVehicleType(rawType);
   }
 
   isMatchingVehicleType(tripVehicleType) {
+    if (!tripVehicleType) return true;
     const myType = this.getDriverVehicleType();
     const tripType = this.normalizeVehicleType(tripVehicleType);
     return myType === tripType;
@@ -966,6 +968,41 @@ class DriverController {
         this.loadDriverProfileAndStats();
       }
 
+      // Direct instant cancellation signal from customer
+      if (e.key === 'goride_trip_cancelled_event') {
+        try {
+          const cancelData = JSON.parse(e.newValue || '{}');
+          const cancelledId = String(cancelData.tripId || '');
+          if (cancelledId) {
+            // 1. Close incoming offer modal immediately if open
+            if (this.currentOffer && String(this.currentOffer.id || this.currentOffer.tripId) === cancelledId) {
+              console.log('[DriverApp] Received instant cancellation event for incoming offer:', cancelledId);
+              this.renderIncomingOfferDialog(null);
+              this.currentOffer = null;
+              this.incomingRequests = [];
+              this.showToast('🛑 Cuốc xe #' + cancelledId + ' vừa bị khách hàng huỷ!', 'warning', 4000);
+            }
+            // 2. Cancel active trip immediately if driver accepted it
+            if (this.activeTrip && String(this.activeTrip.id) === cancelledId) {
+              this.showToast('🛑 Khách hàng đã huỷ chuyến xe #' + cancelledId + '!', 'error', 5000);
+              this.activeTrip = null;
+              if (this.mapController) {
+                if (typeof this.mapController.clearRoute === 'function') this.mapController.clearRoute();
+                if (typeof this.mapController.clearDriverRoute === 'function') this.mapController.clearDriverRoute();
+                if (typeof this.mapController.clearMarkers === 'function') {
+                  this.mapController.clearMarkers('pickup');
+                  this.mapController.clearMarkers('destination');
+                }
+              }
+              this.renderActiveTripUI();
+              if (this.isOnline) {
+                this.loadIncomingRequests();
+              }
+            }
+          }
+        } catch (err) {}
+      }
+
       // Check trip requests and active trip changes
       if (e.key === 'goride_admin_trips' || e.key === 'goride_pending_trip_offers' || e.key === 'goride_active_trip' || e.key === 'goride_last_trip_event') {
         if (this.activeTrip) {
@@ -977,6 +1014,7 @@ class DriverController {
               this.activeTrip = null;
               if (this.mapController) {
                 if (typeof this.mapController.clearRoute === 'function') this.mapController.clearRoute();
+                if (typeof this.mapController.clearDriverRoute === 'function') this.mapController.clearDriverRoute();
                 if (typeof this.mapController.clearMarkers === 'function') {
                   this.mapController.clearMarkers('pickup');
                   this.mapController.clearMarkers('destination');
@@ -1153,8 +1191,8 @@ class DriverController {
       if (!driverId && !this.isOnline) return;
       const driverName = user?.name || 'Tài xế';
       const driverPhone = user?.phone || '';
-      const vInfo = this.getVehicleInfo(user?.vehicle?.type || user?.vehicleType);
-      const vehicleType = vInfo.type;
+      const vehicleType = this.getDriverVehicleType();
+      const vInfo = this.getVehicleInfo(vehicleType);
       const vehicleTypeName = vInfo.label;
       const plate = user?.vehicle?.plate || user?.licensePlate || vInfo.defaultPlate;
       const model = user?.vehicle?.model || user?.vehicleModel || vInfo.defaultModel;
@@ -1362,7 +1400,9 @@ class DriverController {
       statusDot.className = this.isOnline ? 'status-pulse-dot' : 'status-pulse-dot offline';
     }
     if (statusText) {
-      statusText.textContent = this.isOnline ? 'Đang trực tuyến (Sẵn sàng nhận chuyến)' : 'Ngoại tuyến (Vào Profile để bật)';
+      const myType = this.getDriverVehicleType();
+      const vInfo = this.getVehicleInfo(myType);
+      statusText.textContent = this.isOnline ? `${vInfo.icon} ${vInfo.name} • Trực tuyến` : `${vInfo.icon} ${vInfo.name} • Ngoại tuyến`;
     }
     if (currentAddr && this.currentPosition.address) {
       const cleanAddr = this.currentPosition.address.replace(/\s*•\s*Chạm để.*$/, '').trim();
@@ -1388,6 +1428,17 @@ class DriverController {
       }
       this.realtimeOffersUnsub = realtimeSync.listenTripOffers((offer) => {
         if (this.isOnline && !this.activeTrip) {
+          if (offer && (offer.status === 'REMOVED' || offer.status === 'CANCELLED')) {
+            const offerIdStr = String(offer.id || offer.tripId);
+            if (this.currentOffer && String(this.currentOffer.id || this.currentOffer.tripId) === offerIdStr) {
+              console.log('[DriverApp] Active offer removed from Firebase Cloud:', offerIdStr);
+              this.renderIncomingOfferDialog(null);
+              this.currentOffer = null;
+              this.incomingRequests = [];
+              this.showToast('🔔 Cuốc xe #' + offerIdStr + ' đã được khách huỷ hoặc có tài xế khác nhận.', 'info', 3500);
+              return;
+            }
+          }
           this.loadIncomingRequests();
         }
       });
@@ -1509,6 +1560,9 @@ class DriverController {
                 destinationCoords: dCoords,
                 routeGeometry: t.routeGeometry || null,
                 targetedDriverIds: t.targetedDriverIds || [],
+                paymentMethod: t.paymentMethod || (t.paidByWallet ? 'wallet' : 'cash'),
+                paidByWallet: !!(t.paidByWallet || t.paymentMethod === 'wallet'),
+                walletDeducted: !!(t.walletDeducted === true),
                 createdAt: t.createdAt || t.created_at || null
               });
             }
@@ -1543,6 +1597,9 @@ class DriverController {
                   destinationCoords: dCoords,
                   routeGeometry: p.routeGeometry || null,
                   targetedDriverIds: p.targetedDriverIds || [],
+                  paymentMethod: p.paymentMethod || (p.paidByWallet ? 'wallet' : 'cash'),
+                  paidByWallet: !!(p.paidByWallet || p.paymentMethod === 'wallet'),
+                  walletDeducted: !!(p.walletDeducted === true),
                   createdAt: p.createdAt || p.created_at || null
                 });
               }
@@ -1577,6 +1634,9 @@ class DriverController {
                 destinationCoords: dCoords,
                 routeGeometry: act.routeGeometry || null,
                 targetedDriverIds: act.targetedDriverIds || [],
+                paymentMethod: act.paymentMethod || (act.paidByWallet ? 'wallet' : 'cash'),
+                paidByWallet: !!(act.paidByWallet || act.paymentMethod === 'wallet'),
+                walletDeducted: !!(act.walletDeducted === true),
                 createdAt: act.createdAt || null
               });
             }
@@ -1609,6 +1669,9 @@ class DriverController {
               destinationCoords: dCoords,
               routeGeometry: pendingTrip.routeGeometry || null,
               targetedDriverIds: pendingTrip.targetedDriverIds || [],
+              paymentMethod: pendingTrip.paymentMethod || (pendingTrip.paidByWallet ? 'wallet' : 'cash'),
+              paidByWallet: !!(pendingTrip.paidByWallet || pendingTrip.paymentMethod === 'wallet'),
+              walletDeducted: !!(pendingTrip.walletDeducted === true),
               createdAt: pendingTrip.createdAt || null
             });
           }
@@ -1647,6 +1710,9 @@ class DriverController {
                 destinationCoords: dCoords,
                 routeGeometry: co.routeGeometry || null,
                 targetedDriverIds: co.targetedDriverIds || [],
+                paymentMethod: co.paymentMethod || (co.paidByWallet ? 'wallet' : 'cash'),
+                paidByWallet: !!(co.paidByWallet || co.paymentMethod === 'wallet'),
+                walletDeducted: !!(co.walletDeducted === true),
                 createdAt: co.createdAt || null
               });
             }
@@ -1709,10 +1775,11 @@ class DriverController {
 
         // Kiểm tra danh sách tài xế được chỉ định (Targeted drivers list)
         if (req.targetedDriverIds && Array.isArray(req.targetedDriverIds) && req.targetedDriverIds.length > 0) {
-          const isTargeted = (myDriverId && req.targetedDriverIds.includes(myDriverId)) ||
+          const isTargeted = req.targetedDriverIds.includes('*') ||
+                             (myDriverId && req.targetedDriverIds.includes(myDriverId)) ||
                              (myDriverPhone && req.targetedDriverIds.includes(myDriverPhone)) ||
                              (curUser?.name && req.targetedDriverIds.includes(curUser.name)) ||
-                             req.targetedDriverIds.includes('*');
+                             (curUser?.phone && req.targetedDriverIds.includes(curUser.phone));
           if (!isTargeted) return false;
         }
 
@@ -1731,12 +1798,12 @@ class DriverController {
         this.renderIncomingOfferDialog(filteredRequests[0]);
       } else if (this.currentOffer) {
         const curId = String(this.currentOffer.id || this.currentOffer.tripId);
-        let isCancelledOrTaken = false;
+        let isStillPendingLocally = false;
         try {
           const allTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
           const match = allTrips.find(t => String(t.id) === curId);
-          if (match && ['cancelled', 'completed', 'accepted', 'in_progress'].includes(match.status?.toLowerCase())) {
-            isCancelledOrTaken = true;
+          if (match && (match.status || '').toLowerCase() === 'requested') {
+            isStillPendingLocally = true;
           }
         } catch (e) {}
 
@@ -1744,13 +1811,14 @@ class DriverController {
         if (this.currentOffer.createdAt) cCreatedAtMs = new Date(this.currentOffer.createdAt).getTime();
         else if (this.currentOffer.timestamp) cCreatedAtMs = new Date(this.currentOffer.timestamp).getTime();
         if (cCreatedAtMs > 0 && (Date.now() - cCreatedAtMs >= 15 * 60 * 1000)) {
-          isCancelledOrTaken = true;
+          isStillPendingLocally = false;
         }
 
-        if (isCancelledOrTaken || this.handledTripIds.has(curId) || this.declinedTripIds.has(curId)) {
+        if (!isStillPendingLocally || this.handledTripIds.has(curId) || this.declinedTripIds.has(curId)) {
           this.renderIncomingOfferDialog(null);
+          this.currentOffer = null;
+          this.showToast('🔔 Cuốc xe #' + curId + ' đã bị khách hàng huỷ hoặc đã có tài xế khác nhận.', 'info', 3500);
         }
-        // Keep active offer open during polling jitter!
       } else {
         this.renderIncomingOfferDialog(null);
       }
@@ -1817,14 +1885,46 @@ class DriverController {
     try {
       this.showToast('Đang tiếp nhận cuốc xe...', 'info');
 
+      // 1. Notify Backend C++ REST API if active (safe silent fallback for offline / local preview)
       if (typeof apiClient !== 'undefined') {
         try {
           await apiClient.acceptDriverOffer(req.tripId || req.id);
-        } catch (e) {}
+        } catch (e) {
+          console.log('[DriverApp] Backend offline/local mode, continuing with local sync:', e?.message || e);
+        }
+      }
+
+      // 2. Validate with Local Storage to prevent accepting cancelled trips
+      try {
+        const allTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
+        const m = allTrips.find(t => String(t.id) === reqIdStr);
+        if (m && m.status === 'cancelled') {
+          this.showToast('❌ Cuốc xe này đã bị khách hàng huỷ trước đó!', 'error', 4500);
+          this.renderIncomingOfferDialog(null);
+          this.currentOffer = null;
+          this.incomingRequests = [];
+          return;
+        }
+      } catch (e) {}
+
+      // 3. Validate with Firebase Realtime Cloud if connected
+      if (typeof realtimeSync !== 'undefined' && realtimeSync.isAvailable()) {
+        try {
+          const snap = await realtimeSync.db.ref(`goride_trips/${reqIdStr}`).once('value');
+          const tVal = snap.val();
+          if (tVal && tVal.status === 'CANCELLED') {
+            this.showToast('❌ Cuốc xe này đã bị khách hàng huỷ trên hệ thống!', 'error', 4500);
+            this.renderIncomingOfferDialog(null);
+            this.currentOffer = null;
+            this.incomingRequests = [];
+            return;
+          }
+        } catch (fbErr) {}
       }
 
       // Hide floating incoming offer modal
       this.renderIncomingOfferDialog(null);
+      this.currentOffer = null;
       this.incomingRequests = [];
 
       // Get Driver Info
@@ -1835,20 +1935,23 @@ class DriverController {
         } catch (e) {}
       }
 
-      let vehicleType = user?.vehicle?.type || user?.vehicleType || 'motorbike';
+      let vehicleType = this.getDriverVehicleType();
+      const vInfo = this.getVehicleInfo(vehicleType);
       let isBike = (vehicleType === 'bike' || vehicleType === 'motorbike');
-      let driverPlate = user?.vehicle?.plate || user?.licensePlate || '';
-      let driverVehicle = user?.vehicle?.model || (isBike ? 'Xe máy' : 'Ô tô');
+      let driverPlate = user?.vehicle?.plate || user?.licensePlate || vInfo.defaultPlate;
+      let driverVehicle = user?.vehicle?.model || vInfo.name;
       let driverName = user?.name || 'Tài xế đối tác';
       let driverRating = '5.0';
+      let driverPhone = (user && user.role === 'driver' && user.phone) ? user.phone : '0918765432';
 
       try {
         const allDrivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
         const curProfile = allDrivers.find(d => d.email === user?.email || d.phone === user?.phone || d.id === user?.id);
         if (curProfile) {
           driverName = curProfile.name || driverName;
-          driverPlate = curProfile.plate || curProfile.licensePlate || driverPlate || '';
-          driverVehicle = curProfile.model || curProfile.vehicleModel || driverVehicle || (isBike ? 'Xe máy' : 'Ô tô');
+          driverPlate = curProfile.plate || curProfile.licensePlate || driverPlate || vInfo.defaultPlate;
+          driverVehicle = curProfile.model || curProfile.vehicleModel || driverVehicle || vInfo.name;
+          if (curProfile.phone) driverPhone = curProfile.phone;
           if (curProfile.vehicleType) {
             vehicleType = curProfile.vehicleType;
             isBike = (vehicleType === 'bike' || vehicleType === 'motorbike');
@@ -1882,7 +1985,7 @@ class DriverController {
       // Initialize active trip in STAGE 1 (heading to pickup)
       this.activeTrip = {
         id: req.tripId || req.id,
-        customerName: req.customerName || 'Khách hàng GoRide',
+        customerName: req.customerName || 'Khách hàng Navigo',
         phone: req.phone || '0901234567',
         pickup: req.pickup,
         pickupCoords: coords.pickup,
@@ -1894,10 +1997,14 @@ class DriverController {
         distance: req.distance || '3.2',
         stage: 'heading_to_pickup', // Stage 1: heading_to_pickup, Stage 2: trip_in_progress
         driverName: driverName,
+        driverPhone: driverPhone,
         licensePlate: driverPlate,
         vehicleModel: driverVehicle,
         vehicleType: vehicleType,
         driverRating: driverRating,
+        paymentMethod: req.paymentMethod || (req.paidByWallet ? 'wallet' : 'cash'),
+        paidByWallet: !!(req.paidByWallet || req.paymentMethod === 'wallet'),
+        walletDeducted: false,
         startedAt: new Date().toISOString()
       };
 
@@ -1909,12 +2016,16 @@ class DriverController {
         if (tIdx !== -1) {
           allTrips[tIdx].status = 'accepted';
           allTrips[tIdx].driverName = driverName;
+          allTrips[tIdx].driverPhone = driverPhone;
           allTrips[tIdx].licensePlate = driverPlate;
           allTrips[tIdx].vehicleModel = driverVehicle;
           allTrips[tIdx].vehicleType = vehicleType;
           allTrips[tIdx].driverRating = driverRating;
           allTrips[tIdx].driverLat = Number(this.currentPosition.lat);
           allTrips[tIdx].driverLon = Number(this.currentPosition.lng);
+          allTrips[tIdx].paymentMethod = this.activeTrip.paymentMethod;
+          allTrips[tIdx].paidByWallet = this.activeTrip.paidByWallet;
+          allTrips[tIdx].walletDeducted = false;
           if (tripRouteGeometry) allTrips[tIdx].routeGeometry = tripRouteGeometry;
         } else {
           allTrips.unshift({
@@ -1922,6 +2033,7 @@ class DriverController {
             customerName: this.activeTrip.customerName,
             customerPhone: this.activeTrip.phone,
             driverName: driverName,
+            driverPhone: driverPhone,
             licensePlate: driverPlate,
             vehicleModel: driverVehicle,
             vehicleType: vehicleType,
@@ -1932,6 +2044,9 @@ class DriverController {
             destination: this.activeTrip.destination,
             fare: this.activeTrip.fare,
             distance: this.activeTrip.distance,
+            paymentMethod: this.activeTrip.paymentMethod,
+            paidByWallet: this.activeTrip.paidByWallet,
+            walletDeducted: false,
             routeGeometry: tripRouteGeometry,
             status: 'accepted',
             createdAt: new Date().toISOString()
@@ -1947,8 +2062,10 @@ class DriverController {
         activeObj.id = this.activeTrip.id;
         activeObj.status = 'ACCEPTED';
         activeObj.driverName = driverName;
+        activeObj.driverPhone = driverPhone;
         activeObj.licensePlate = driverPlate;
         activeObj.vehicleModel = driverVehicle;
+        activeObj.vehicleType = vehicleType;
         activeObj.driverRating = driverRating;
         activeObj.driverLat = this.currentPosition.lat;
         activeObj.driverLon = this.currentPosition.lng;
@@ -1963,11 +2080,20 @@ class DriverController {
         activeObj.customerPhone = this.activeTrip.phone;
         activeObj.distance = this.activeTrip.distance;
         activeObj.fare = this.activeTrip.fare;
+        activeObj.paymentMethod = this.activeTrip.paymentMethod;
+        activeObj.paidByWallet = this.activeTrip.paidByWallet;
+        activeObj.walletDeducted = false;
         if (tripRouteGeometry) activeObj.routeGeometry = tripRouteGeometry;
         localStorage.setItem('goride_active_trip', JSON.stringify(activeObj));
 
         // 3. Clear pending offers
         localStorage.removeItem('goride_pending_trip_offers');
+
+        // 4. Broadcast instant acceptance event
+        localStorage.setItem('goride_trip_accepted_event', JSON.stringify({
+          tripId: this.activeTrip.id,
+          timestamp: Date.now()
+        }));
       } catch (err) {}
 
       // 4. Firebase Realtime Cloud Broadcast
@@ -2040,45 +2166,18 @@ class DriverController {
     }
 
     const fareFormatted = Number(this.activeTrip.fare || 0).toLocaleString('vi-VN') + ' ₫';
-    const isStage1 = (this.activeTrip.stage === 'heading_to_pickup');
+    const stg = this.activeTrip.stage || '';
+    const sts = (this.activeTrip.status || '').toUpperCase();
+
+    const isStage2 = (stg === 'trip_in_progress' || sts === 'IN_PROGRESS');
+    const isStageArrived = !isStage2 && (stg === 'arrived_at_pickup' || sts === 'ARRIVED');
+    const isStage1 = !isStage2 && !isStageArrived;
+    const custPhone = this.activeTrip.phone || this.activeTrip.customerPhone || '0901234567';
+
     const pDisplay = (this.activeTrip.pickup && typeof this.activeTrip.pickup === 'object') ? (this.activeTrip.pickup.name || this.activeTrip.pickup.address) : (this.activeTrip.pickupName || this.activeTrip.pickup || 'Điểm hẹn đón');
     const dDisplay = (this.activeTrip.destination && typeof this.activeTrip.destination === 'object') ? (this.activeTrip.destination.name || this.activeTrip.destination.address) : (this.activeTrip.dropoffName || this.activeTrip.destination || 'Điểm đến của khách');
 
-    if (isStage1) {
-      // Stage 1: Heading to pickup location
-      card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
-          <div>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <span class="status-pulse-dot" style="background:#0288d1; box-shadow:0 0 0 3px rgba(2,136,209,0.25);"></span>
-              <span style="font-size:0.8rem; font-weight:800; color:#0288d1; text-transform:uppercase; letter-spacing:0.04em;">Đang đến điểm đón khách</span>
-            </div>
-            <h3 style="margin:4px 0 0; font-size:1.15rem; font-weight:800; color:#0f172a;">${this.activeTrip.customerName}</h3>
-            <a href="tel:${this.activeTrip.phone}" style="display:inline-flex; align-items:center; gap:4px; font-size:0.82rem; color:#0288d1; text-decoration:none; margin-top:2px; font-weight:600;">
-              📞 ${this.activeTrip.phone} (Gọi khách hàng)
-            </a>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:1.4rem; font-weight:800; color:#10b981;">${fareFormatted}</div>
-            <span style="font-size:0.75rem; color:#64748b;">Cước phí nhận</span>
-          </div>
-        </div>
-
-        <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:12px; padding:12px 14px; margin-bottom:14px;">
-          <div style="display:flex; align-items:flex-start; gap:8px;">
-            <span style="font-size:1.2rem; color:#0288d1;">🟢</span>
-            <div>
-              <div style="font-size:0.72rem; color:#0369a1; font-weight:700; text-transform:uppercase;">Chỉ dẫn tới điểm hẹn đón:</div>
-              <div style="font-weight:700; font-size:0.92rem; color:#0f172a;" id="active-trip-pickup-text">${pDisplay}</div>
-            </div>
-          </div>
-        </div>
-
-        <button type="button" class="btn btn-primary btn-block" id="btn-confirm-pickup" onclick="driverController.confirmPickedUp()" style="padding:13px; font-size:1rem; font-weight:800; border-radius:12px; box-shadow:0 4px 14px rgba(2,136,209,0.35);">
-          ✓ Đã đến & Đón khách
-        </button>
-      `;
-    } else {
+    if (isStage2) {
       // Stage 2: Picked up passenger -> Heading to destination
       card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
@@ -2088,15 +2187,20 @@ class DriverController {
               <span style="font-size:0.8rem; font-weight:800; color:#10b981; text-transform:uppercase; letter-spacing:0.04em;">Đang chở khách đến điểm đến</span>
             </div>
             <h3 style="margin:4px 0 0; font-size:1.15rem; font-weight:800; color:#0f172a;">${this.activeTrip.customerName}</h3>
-            <span style="font-size:0.8rem; color:#64748b;">Quãng đường: ~${this.activeTrip.distance || '3.2'} km</span>
+            <div style="display:flex; align-items:center; gap:10px; margin-top:3px;">
+              <span style="font-size:0.8rem; color:#64748b;">Quãng đường: ~${this.activeTrip.distance || '3.2'} km</span>
+              <a href="tel:${custPhone}" style="display:inline-flex; align-items:center; gap:3px; font-size:0.8rem; color:#0288d1; text-decoration:none; font-weight:700;">
+                📞 ${custPhone}
+              </a>
+            </div>
           </div>
           <div style="text-align:right;">
-            <div style="font-size:1.4rem; font-weight:800; color:#10b981;">${fareFormatted}</div>
-            <span style="font-size:0.75rem; color:#64748b;">Thu tiền mặt / ví</span>
+            <div style="font-size:1.35rem; font-weight:800; color:#10b981;">${fareFormatted}</div>
+            <span style="font-size:0.75rem; color:#64748b;">${this.activeTrip.paidByWallet ? 'Ví Navigo Pay' : 'Tiền mặt'}</span>
           </div>
         </div>
 
-        <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:12px 14px; margin-bottom:14px;">
+        <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:10px 14px; margin-bottom:14px;">
           <div style="display:flex; align-items:flex-start; gap:8px;">
             <span style="font-size:1.2rem; color:#ef4444;">🔴</span>
             <div>
@@ -2106,13 +2210,157 @@ class DriverController {
           </div>
         </div>
 
-        <button type="button" class="btn btn-success btn-block" id="btn-complete-trip" onclick="driverController.confirmCompletedTrip()" style="padding:13px; font-size:1rem; font-weight:800; border-radius:12px; background:linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow:0 4px 14px rgba(16,185,129,0.4);">
-          🏁 Hoàn thành chuyến & Thu tiền (${fareFormatted})
+        <button type="button" class="btn btn-success btn-block" id="btn-complete-trip" onclick="driverController.confirmCompletedTrip()" style="width:100%; padding:13px; font-size:1rem; font-weight:800; border-radius:12px; background:linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow:0 4px 14px rgba(16,185,129,0.4); border:none; color:#fff; cursor:pointer;">
+          🏁 Đã đến điểm đến — Hoàn thành chuyến đi (${fareFormatted})
         </button>
+      `;
+    } else if (isStageArrived) {
+      // Stage Arrived: Driver has arrived at pickup, waiting for customer to come out
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; border-bottom:1px solid #fef3c7; padding-bottom:10px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span class="status-pulse-dot" style="background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,0.25);"></span>
+              <span style="font-size:0.8rem; font-weight:800; color:#d97706; text-transform:uppercase; letter-spacing:0.04em;">Đã đến điểm hẹn — Đang chờ khách ra xe</span>
+            </div>
+            <h3 style="margin:4px 0 0; font-size:1.15rem; font-weight:800; color:#0f172a;">${this.activeTrip.customerName}</h3>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:1.35rem; font-weight:800; color:#10b981;">${fareFormatted}</div>
+            <span style="font-size:0.75rem; color:#64748b;">Cước phí nhận</span>
+          </div>
+        </div>
+
+        <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:10px 14px; margin-bottom:12px;">
+          <div style="font-size:0.82rem; color:#92400e; font-weight:600; line-height:1.4;">
+            🔔 Hệ thống đã gửi thông báo đến máy khách: <strong>"Tài xế đã có mặt tại điểm đón, mời bạn ra xe"</strong>.
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
+          <a href="tel:${custPhone}" style="display:flex; align-items:center; justify-content:center; gap:5px; height:42px; background:#eff6ff; color:#1d4ed8; text-decoration:none; border-radius:10px; font-weight:700; font-size:0.85rem; border:1px solid #bfdbfe;">
+            📞 Gọi nhắc khách
+          </a>
+          <button type="button" onclick="driverController.remindCustomer()" style="display:flex; align-items:center; justify-content:center; gap:5px; height:42px; background:#fef3c7; color:#b45309; border-radius:10px; font-weight:700; font-size:0.85rem; border:1px solid #fde68a; cursor:pointer;">
+            🔔 Rung chuông nhắc
+          </button>
+        </div>
+
+        <button type="button" class="btn btn-success btn-block" id="btn-confirm-pickup" onclick="driverController.confirmPickedUp()" style="width:100%; padding:13px; font-size:0.95rem; font-weight:800; border-radius:12px; background:linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow:0 4px 14px rgba(16,185,129,0.35); border:none; color:#fff; cursor:pointer;">
+          🚗 Khách đã lên xe — Bắt đầu chuyến đi
+        </button>
+      `;
+    } else {
+      // Stage 1: Heading to pickup location
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span class="status-pulse-dot" style="background:#0288d1; box-shadow:0 0 0 3px rgba(2,136,209,0.25);"></span>
+              <span style="font-size:0.8rem; font-weight:800; color:#0288d1; text-transform:uppercase; letter-spacing:0.04em;">Đang đến điểm đón khách</span>
+            </div>
+            <h3 style="margin:4px 0 0; font-size:1.15rem; font-weight:800; color:#0f172a;">${this.activeTrip.customerName}</h3>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:1.35rem; font-weight:800; color:#10b981;">${fareFormatted}</div>
+            <span style="font-size:0.75rem; color:#64748b;">Cước phí nhận</span>
+          </div>
+        </div>
+
+        <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:12px; padding:10px 14px; margin-bottom:12px;">
+          <div style="display:flex; align-items:flex-start; gap:8px;">
+            <span style="font-size:1.2rem; color:#0288d1;">🟢</span>
+            <div>
+              <div style="font-size:0.72rem; color:#0369a1; font-weight:700; text-transform:uppercase;">Chỉ dẫn tới điểm hẹn đón:</div>
+              <div style="font-weight:700; font-size:0.92rem; color:#0f172a;" id="active-trip-pickup-text">${pDisplay}</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 120px 1fr; gap:8px; margin-bottom:4px;">
+          <a href="tel:${custPhone}" style="display:flex; align-items:center; justify-content:center; gap:6px; height:46px; background:#eff6ff; color:#0288d1; text-decoration:none; border-radius:12px; font-weight:700; font-size:0.88rem; border:1.5px solid #bfdbfe;">
+            📞 Gọi khách
+          </a>
+          <button type="button" class="btn btn-primary" id="btn-confirm-arrived" onclick="driverController.confirmArrived()" style="height:46px; font-size:0.92rem; font-weight:800; border-radius:12px; background:linear-gradient(135deg, #0288d1 0%, #0369a1 100%); box-shadow:0 4px 14px rgba(2,136,209,0.35); border:none; color:#fff; cursor:pointer;">
+            📍 Tôi đã đến điểm đón
+          </button>
+        </div>
       `;
     }
 
     card.style.display = 'block';
+  }
+
+  async confirmArrived() {
+    if (!this.activeTrip) return;
+
+    try {
+      this.activeTrip.stage = 'arrived_at_pickup';
+      this.activeTrip.status = 'ARRIVED';
+
+      if (typeof apiClient !== 'undefined') {
+        try {
+          await apiClient.updateDriverTripStatus(this.activeTrip.id, 'arrived');
+        } catch (e) {
+          console.warn('[DriverApp] API arrive notice:', e);
+        }
+      }
+
+      // Update shared storage
+      try {
+        const allTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
+        const idx = allTrips.findIndex(t => t.id === this.activeTrip.id);
+        if (idx !== -1) {
+          allTrips[idx].status = 'ARRIVED';
+          allTrips[idx].arrivedAt = new Date().toISOString();
+          localStorage.setItem('goride_admin_trips', JSON.stringify(allTrips));
+        }
+
+        let activeObj = {};
+        try {
+          activeObj = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
+        } catch (e) {}
+        activeObj.id = this.activeTrip.id;
+        activeObj.status = 'ARRIVED';
+        activeObj.arrivedAt = new Date().toISOString();
+        localStorage.setItem('goride_active_trip', JSON.stringify(activeObj));
+      } catch (e) {}
+
+      // Broadcast to Firebase Realtime Cloud
+      if (typeof realtimeSync !== 'undefined' && this.activeTrip) {
+        realtimeSync.updateTripStatus(this.activeTrip.id, 'ARRIVED');
+      }
+
+      // Storage event for local cross-tab sync
+      try {
+        localStorage.setItem('goride_trip_arrived_event', JSON.stringify({
+          tripId: this.activeTrip.id,
+          timestamp: Date.now()
+        }));
+      } catch (e) {}
+
+      this.renderActiveTripUI();
+      this.showToast('📍 Đã thông báo tới khách hàng: Bạn đã có mặt tại điểm đón!', 'success', 5000);
+    } catch (err) {
+      this.showToast('Lỗi: ' + err.message, 'error');
+    }
+  }
+
+  remindCustomer() {
+    if (!this.activeTrip) return;
+    try {
+      if (typeof realtimeSync !== 'undefined') {
+        realtimeSync.updateTripStatus(this.activeTrip.id, 'ARRIVED');
+      }
+      localStorage.setItem('goride_trip_arrived_event', JSON.stringify({
+        tripId: this.activeTrip.id,
+        remindCount: Date.now(),
+        timestamp: Date.now()
+      }));
+      this.showToast('🔔 Đã rung chuông nhắc khách hàng ra xe!', 'info', 3500);
+    } catch (e) {
+      this.showToast('Đã phát chuông thông báo tới khách.', 'info');
+    }
   }
 
   async confirmPickedUp() {
@@ -2120,6 +2368,7 @@ class DriverController {
 
     try {
       this.activeTrip.stage = 'trip_in_progress';
+      this.activeTrip.status = 'IN_PROGRESS';
 
       if (typeof apiClient !== 'undefined') {
         try {
@@ -2150,6 +2399,10 @@ class DriverController {
           activeObj.routeGeometry = this.activeTrip.routeGeometry;
         }
         localStorage.setItem('goride_active_trip', JSON.stringify(activeObj));
+        localStorage.setItem('goride_trip_progress_event', JSON.stringify({
+          tripId: this.activeTrip.id,
+          timestamp: Date.now()
+        }));
       } catch (e) {}
 
       // Broadcast to Firebase Realtime Cloud
@@ -2828,7 +3081,7 @@ class DriverController {
       // 2. Check goride_admin_trips
       if (!trip) {
         const allTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
-        const found = allTrips.find(t => ['accepted', 'in_progress'].includes(t.status?.toLowerCase()));
+        const found = allTrips.find(t => ['accepted', 'arrived', 'in_progress'].includes(t.status?.toLowerCase()));
         if (found) trip = found;
       }
 
@@ -2882,13 +3135,19 @@ class DriverController {
           routeGeometry: tripRouteGeometry,
           fare: Number(trip.fare || trip.fareAmount) || 45000,
           distance: trip.distance || '3.2',
-          stage: isProg ? 'trip_in_progress' : 'heading_to_pickup',
+          stage: isProg ? 'trip_in_progress' : (String(trip.status || '').toUpperCase() === 'ARRIVED' ? 'arrived_at_pickup' : 'heading_to_pickup'),
+          status: String(trip.status || (isProg ? 'IN_PROGRESS' : 'ACCEPTED')).toUpperCase(),
+          customerPhone: trip.customerPhone || trip.phone || '0901234567',
           driverName: trip.driverName,
+          driverPhone: trip.driverPhone || '0918765432',
           licensePlate: trip.licensePlate,
           vehicleModel: trip.vehicleModel,
           vehicleType: trip.vehicleType,
           driverLat: this.currentPosition.lat,
           driverLon: this.currentPosition.lng,
+          paymentMethod: trip.paymentMethod || (trip.paidByWallet ? 'wallet' : 'cash'),
+          paidByWallet: !!(trip.paidByWallet || trip.paymentMethod === 'wallet'),
+          walletDeducted: !!(trip.walletDeducted === true),
           startedAt: trip.createdAt || new Date().toISOString()
         };
 
@@ -2911,9 +3170,18 @@ class DriverController {
     if (!this.activeTrip) return;
 
     const completedFare = Number(this.activeTrip.fareNum || this.activeTrip.fare || this.activeTrip.fareAmount) || 45000;
+    const isPaidByWallet = !!(
+      this.activeTrip.paidByWallet ||
+      this.activeTrip.walletDeducted ||
+      this.activeTrip.paymentMethod === 'wallet'
+    );
     const completedTrip = {
       ...this.activeTrip,
       fare: completedFare,
+      fareAmount: completedFare,
+      paymentMethod: this.activeTrip.paymentMethod || (isPaidByWallet ? 'wallet' : 'cash'),
+      paidByWallet: isPaidByWallet,
+      walletDeducted: isPaidByWallet,
       status: 'completed',
       completedAt: new Date().toISOString()
     };
@@ -2927,22 +3195,71 @@ class DriverController {
     // 1. Update stats locally
     this.driverStats.tripsToday += 1;
     this.driverStats.earnings += completedFare;
-    this.driverStats.walletBalance += completedFare;
 
-    // Credit driver NaviPay wallet without deducting (Tài xế nhận chuyến thì KHÔNG bị trừ tiền)
-    if (window.NaviWalletEngine) {
-      try {
-        const curDriver = (typeof sessionManager !== 'undefined') ? sessionManager.getUser() : null;
-        const drvPhone = curDriver?.phone || '0918765432';
-        window.NaviWalletEngine.creditDriverTrip(drvPhone, completedFare, completedTrip.id, {
-          customerName: completedTrip.customerName || 'Khách hàng Navigo',
-          customerPhone: completedTrip.customerPhone || completedTrip.phone || '0901234567',
-          pickup: completedTrip.pickup?.name || completedTrip.pickup,
-          destination: completedTrip.destination?.name || completedTrip.destination
-        });
-      } catch (drvWalletErr) {
-        console.warn('[DriverWallet] Notice:', drvWalletErr);
+    // Credit driver NaviPay wallet ONLY if customer paid via Navigo wallet!
+    // ("đối với tài xế thì sẽ nhận tiền vào ví đúng số tiền cuốc xe đó nếu khách đó thanh toán bằng ví navigo, nếu khách thanh toán tiền mặt thì không có cộng hay trừ gì hết nhé")
+    if (isPaidByWallet) {
+      this.driverStats.walletBalance += completedFare;
+      if (window.NaviWalletEngine) {
+        // 1. Deduct customer wallet upon successful completion (isolated)
+        try {
+          const custPhone = completedTrip.customerPhone || completedTrip.phone || '0901234567';
+          const curCustWallet = window.NaviWalletEngine.getWallet(custPhone);
+          const alreadyPaidByCust = curCustWallet && Array.isArray(curCustWallet.transactions) && curCustWallet.transactions.some(t => t.tripId === completedTrip.id || (t.id && t.id.includes(completedTrip.id)));
+          if (!alreadyPaidByCust) {
+            window.NaviWalletEngine.payTrip(custPhone, completedFare, completedTrip.id, {
+              pickupName: completedTrip.pickup?.name || completedTrip.pickupName || completedTrip.pickup || 'Điểm đón',
+              dropoffName: completedTrip.destination?.name || completedTrip.dropoffName || completedTrip.destination || 'Điểm đến'
+            });
+          }
+        } catch (custWalletErr) {
+          console.warn('[DriverWallet] Customer deduction notice:', custWalletErr);
+        }
+
+        // 2. Credit driver wallet upon successful completion (strictly guaranteed!)
+        try {
+          const curDriver = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+          const targetDriverPhones = new Set();
+          
+          if (completedTrip.driverPhone) targetDriverPhones.add(completedTrip.driverPhone);
+          if (curDriver && curDriver.phone) targetDriverPhones.add(curDriver.phone);
+          targetDriverPhones.add('0918765432');
+
+          targetDriverPhones.forEach(dPhone => {
+            if (!dPhone) return;
+            window.NaviWalletEngine.creditDriverTrip(dPhone, completedFare, completedTrip.id, {
+              customerName: completedTrip.customerName || 'Khách hàng Navigo',
+              customerPhone: completedTrip.customerPhone || completedTrip.phone || '0901234567',
+              pickup: completedTrip.pickup?.name || completedTrip.pickupName || completedTrip.pickup,
+              destination: completedTrip.destination?.name || completedTrip.dropoffName || completedTrip.destination
+            });
+          });
+        } catch (drvWalletErr) {
+          console.error('[DriverWallet] Driver credit notice:', drvWalletErr);
+        }
       }
+
+      // Update driver wallet balance in session & offline users
+      try {
+        const user = typeof sessionManager !== 'undefined' ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+        if (user && user.role === 'driver') {
+          user.walletBalance = (user.walletBalance || 0) + completedFare;
+          localStorage.setItem('goride_user', JSON.stringify(user));
+
+          const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
+          const uIdx = offlineUsers.findIndex(u => u.id === user.id || u.email === user.email);
+          if (uIdx !== -1) {
+            offlineUsers[uIdx].walletBalance = user.walletBalance;
+            localStorage.setItem('goride_offline_users', JSON.stringify(offlineUsers));
+          }
+          if (typeof realtimeSync !== 'undefined' && user.id) {
+            realtimeSync.updateUserProfile(user.id, { walletBalance: user.walletBalance });
+          }
+        }
+      } catch (err) {}
+      this.syncNaviWalletBalance();
+    } else {
+      console.log('[DriverApp] Khách thanh toán tiền mặt: Không cộng trừ số dư ví Navigo.');
     }
 
     // 2. Persist in driver's completed trips list
@@ -2960,6 +3277,9 @@ class DriverController {
         allTrips[idx].status = 'completed';
         allTrips[idx].fare = completedFare;
         allTrips[idx].completedAt = completedTrip.completedAt;
+        allTrips[idx].paymentMethod = completedTrip.paymentMethod;
+        allTrips[idx].paidByWallet = completedTrip.paidByWallet;
+        allTrips[idx].walletDeducted = completedTrip.walletDeducted;
       } else {
         allTrips.unshift(completedTrip);
       }
@@ -2973,6 +3293,9 @@ class DriverController {
         activeObj = JSON.parse(localStorage.getItem('goride_active_trip') || '{}');
       } catch (e) {}
       activeObj.status = 'COMPLETED';
+      activeObj.paymentMethod = completedTrip.paymentMethod;
+      activeObj.paidByWallet = completedTrip.paidByWallet;
+      activeObj.walletDeducted = completedTrip.walletDeducted;
       localStorage.setItem('goride_active_trip', JSON.stringify(activeObj));
     } catch (e) {}
 
@@ -2980,42 +3303,39 @@ class DriverController {
     if (typeof realtimeSync !== 'undefined' && completedTrip.id) {
       realtimeSync.updateTripStatus(completedTrip.id, 'COMPLETED', {
         completedAt: completedTrip.completedAt,
-        fare: completedFare
+        fare: completedFare,
+        paymentMethod: completedTrip.paymentMethod,
+        paidByWallet: completedTrip.paidByWallet
       });
     }
 
-    // 5. Update driver wallet balance in session & offline users
-    try {
-      const user = typeof sessionManager !== 'undefined' ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-      if (user) {
-        user.walletBalance = (user.walletBalance || 0) + completedFare;
-        localStorage.setItem('goride_user', JSON.stringify(user));
-
-        const offlineUsers = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
-        const uIdx = offlineUsers.findIndex(u => u.id === user.id || u.email === user.email);
-        if (uIdx !== -1) {
-          offlineUsers[uIdx].walletBalance = user.walletBalance;
-          localStorage.setItem('goride_offline_users', JSON.stringify(offlineUsers));
-        }
-        // Persist driver wallet balance & stats to Database
-        if (typeof realtimeSync !== 'undefined' && user.id) {
-          realtimeSync.updateUserProfile(user.id, { walletBalance: user.walletBalance });
-        }
-      }
-    } catch (err) {}
-
     const fareStr = completedFare.toLocaleString('vi-VN') + ' ₫';
-    this.showToast(`Hoàn tất chuyến xe #${completedTrip.id}! Đã cộng ${fareStr} vào ví tài xế.`, 'success', 5000);
-    if (typeof navigoNotifications !== 'undefined') {
-      navigoNotifications.addNotification({
-        id: 'driver_done_' + completedTrip.id,
-        category: 'trips',
-        title: 'HOÀN THÀNH CUỐC XE #' + completedTrip.id,
-        body: 'Chúc mừng bạn đã hoàn thành cuốc xe #' + completedTrip.id + '! Thu nhập +' + completedFare.toLocaleString('vi-VN') + ' ₫ đã được cộng vào ví tài xế.',
-        icon: '💰',
-        actionUrl: 'driver.html',
-        actionText: 'Xem ví thu nhập'
-      });
+    if (isPaidByWallet) {
+      this.showToast(`Hoàn tất chuyến xe #${completedTrip.id}! Đã nhận ${fareStr} vào Ví Navigo Pay.`, 'success', 5000);
+      if (typeof navigoNotifications !== 'undefined') {
+        navigoNotifications.addNotification({
+          id: 'driver_done_' + completedTrip.id,
+          category: 'trips',
+          title: 'HOÀN THÀNH CUỐC XE #' + completedTrip.id,
+          body: 'Chúc mừng bạn đã hoàn thành cuốc xe #' + completedTrip.id + '! Thu nhập +' + fareStr + ' đã được cộng vào Ví Navigo Pay.',
+          icon: '💳',
+          actionUrl: 'wallet.html?role=driver',
+          actionText: 'Xem ví thu nhập'
+        });
+      }
+    } else {
+      this.showToast(`Hoàn tất chuyến xe #${completedTrip.id}! Đã thu ${fareStr} tiền mặt từ khách.`, 'info', 5000);
+      if (typeof navigoNotifications !== 'undefined') {
+        navigoNotifications.addNotification({
+          id: 'driver_done_' + completedTrip.id,
+          category: 'trips',
+          title: 'HOÀN THÀNH CUỐC XE #' + completedTrip.id,
+          body: 'Hoàn thành cuốc xe #' + completedTrip.id + '! Khách thanh toán tiền mặt ' + fareStr + ' trực tiếp cho tài xế.',
+          icon: '💵',
+          actionUrl: 'driver.html',
+          actionText: 'Xem lịch sử'
+        });
+      }
     }
 
     // Reset active trip and map route
@@ -3385,13 +3705,13 @@ class DriverController {
 
     // Get wallet balance from NaviWalletEngine or user profile
     const user = typeof sessionManager !== 'undefined' ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-    const drvPhone = user?.phone || '0918765432';
+    let drvPhone = (user && user.role === 'driver' && user.phone) ? user.phone : '0918765432';
     let userWallet = 0;
     if (window.NaviWalletEngine) {
       const w = window.NaviWalletEngine.getWallet(drvPhone);
       if (w) userWallet = w.balance;
     }
-    if (userWallet === 0 && user && typeof user.walletBalance === 'number') {
+    if (userWallet === 0 && user && user.role === 'driver' && typeof user.walletBalance === 'number') {
       userWallet = user.walletBalance;
     }
 
@@ -3546,13 +3866,13 @@ class DriverController {
 
   syncNaviWalletBalance() {
     try {
-      const curUser = (typeof sessionManager !== 'undefined') ? sessionManager.getUser() : null;
-      const drvPhone = curUser?.phone || '0918765432';
+      const curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+      let drvPhone = (curUser && curUser.role === 'driver' && curUser.phone) ? curUser.phone : '0918765432';
       if (window.NaviWalletEngine) {
         const w = window.NaviWalletEngine.getWallet(drvPhone);
         if (w) {
           this.driverStats.walletBalance = w.balance;
-          if (curUser) {
+          if (curUser && curUser.role === 'driver') {
             curUser.walletBalance = w.balance;
             try { localStorage.setItem('goride_user', JSON.stringify(curUser)); } catch(e) {}
           }
@@ -3582,11 +3902,38 @@ class DriverController {
       if (el) el.textContent = val || '--';
     };
 
-    const vInfo = this.getVehicleInfo(user.vehicle?.type || user.vehicleType);
+    const myType = this.getDriverVehicleType();
+    const vInfo = this.getVehicleInfo(myType);
     setT('account-phone', user.phone);
     setT('account-email', user.email);
     setT('account-plate', user.vehicle?.plate || user.licensePlate || vInfo.defaultPlate);
     setT('account-vehicle', `${vInfo.icon} ${vInfo.label}`);
+
+    const selectV = document.getElementById('select-driver-vehicle-type');
+    if (selectV) {
+      selectV.value = myType;
+      if (!this._vSelectBound) {
+        this._vSelectBound = true;
+        selectV.addEventListener('change', async (e) => {
+          const newType = e.target.value;
+          localStorage.setItem('goride_driver_vehicle_type', newType);
+          const u = typeof sessionManager !== 'undefined' ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+          if (u) {
+            u.vehicleType = newType;
+            if (u.vehicle && typeof u.vehicle === 'object') u.vehicle.type = newType;
+            try { localStorage.setItem('goride_user', JSON.stringify(u)); } catch (err) {}
+          }
+          if (this.isOnline) {
+            await this.setOnlineStatus(true, false);
+          }
+          this.renderOnlineStatusUI();
+          this.renderAccountTab();
+          await this.loadIncomingRequests();
+          const info = this.getVehicleInfo(newType);
+          this.showToast(`Đã chuyển loại phương tiện sang: ${info.icon} ${info.label}`, 'success');
+        });
+      }
+    }
   }
 
   /* ==========================================================================

@@ -251,6 +251,9 @@ int main() {
         bool bad_comp_arr = trip_service.complete_trip("trp_test_002", "drv_02", err);
         record_test("Cannot complete trip from 'ARRIVED' before starting trip (rejected)",
                     !bad_comp_arr);
+
+        // Cleanup Suite 5 trip so customer can request subsequent test trips
+        trip_service.cancel_trip("trp_test_002", "admin", "admin", "Cleanup Suite 5", err);
     }
 
     // ---------------------------------------------------------------------
@@ -282,6 +285,9 @@ int main() {
         bool double_offered = trip_service.offer_trip("trp_test_003", "drv_02", 15, err_double_offer);
         record_test("Cannot offer trip to another driver while active 15s lock is running",
                     !double_offered);
+
+        // Cleanup Suite 6 trip
+        trip_service.cancel_trip("trp_test_003", "admin", "admin", "Cleanup Suite 6", err);
     }
 
     // ---------------------------------------------------------------------
@@ -316,6 +322,9 @@ int main() {
         bool escalated = trip_service.offer_trip("trp_test_004", "drv_02", 15, err_esc);
         record_test("Trip can escalate and offer to next driver once previous offer expires",
                     escalated);
+
+        // Cleanup Suite 7 trip
+        trip_service.cancel_trip("trp_test_004", "admin", "admin", "Cleanup Suite 7", err);
     }
 
     // ---------------------------------------------------------------------
@@ -348,6 +357,9 @@ int main() {
         record_test("Offer audit history accurately records REJECTED status",
                     offers.size() == 1 && offers[0].status == TripOfferStatus::REJECTED &&
                     offers[0].driver_id == "drv_01");
+
+        // Cleanup Suite 8 trip
+        trip_service.cancel_trip("trp_test_005", "admin", "admin", "Cleanup Suite 8", err);
     }
 
     // ---------------------------------------------------------------------

@@ -276,13 +276,20 @@
                         }
 
                         if (matchedUser) {
-                            // Check latest driver status from Firebase if applicable
-                            if (matchedUser.role === 'driver' && window.realtimeSync && window.realtimeSync.isAvailable()) {
+                            // Check latest driver status and role sync from Firebase if applicable
+                            if (window.realtimeSync && window.realtimeSync.isAvailable() && matchedUser.id) {
                                 try {
-                                    const liveDSnap = await window.realtimeSync.db.ref(`goride_drivers/${matchedUser.id}`).once('value');
-                                    const liveD = liveDSnap.val();
-                                    if (liveD && liveD.status) {
-                                        matchedUser.status = liveD.status;
+                                    if (matchedUser.role === 'driver') {
+                                        const liveDSnap = await window.realtimeSync.db.ref(`goride_drivers/${matchedUser.id}`).once('value');
+                                        const liveD = liveDSnap.val();
+                                        if (liveD && liveD.status) {
+                                            matchedUser.status = liveD.status;
+                                        }
+                                    }
+                                    const liveUSnap = await window.realtimeSync.db.ref(`goride_users/${matchedUser.id}`).once('value');
+                                    const liveU = liveUSnap.val();
+                                    if (liveU && liveU.role) {
+                                        matchedUser.role = liveU.role;
                                     }
                                 } catch (e) {}
                             }

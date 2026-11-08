@@ -48,54 +48,55 @@ void record_test(const std::string& name, bool condition, const std::string& det
     std::cout << std::endl;
 }
 
+// Standalone RBAC Authenticate Helper (prevents dangling stack references in captured lambdas)
+static std::optional<User> authenticate_c3_user(AuthService& auth_service,
+                                                const HttpRequest& req, HttpResponse& res,
+                                                const std::vector<std::string>& allowed_roles = {}) {
+    std::string token = req.get_bearer_token();
+    if (token.empty()) {
+        token = req.get_param("token");
+    }
+    if (token.empty()) {
+        res.set_json("{\"success\":false,\"code\":\"AUTH_TOKEN_MISSING\",\"error\":\"Vui lòng cung cấp token xác thực qua Authorization: Bearer <token>.\"}", 401);
+        return std::nullopt;
+    }
+    auto val = auth_service.validate_token(token);
+    if (!val.success) {
+        res.set_json(val.to_json(), val.status_code);
+        return std::nullopt;
+    }
+    if (!allowed_roles.empty()) {
+        bool role_ok = false;
+        for (const auto& r : allowed_roles) {
+            if (val.user.role == r) {
+                role_ok = true;
+                break;
+            }
+        }
+        if (!role_ok) {
+            res.set_json("{\"success\":false,\"code\":\"FORBIDDEN_ROLE\",\"error\":\"Bạn không có quyền thực hiện thao tác này (yêu cầu vai trò phù hợp).\"}", 403);
+            return std::nullopt;
+        }
+    }
+    return val.user;
+}
+
 // Helper to configure all Gate C.3 REST API routes on an in-memory test HttpServer instance
 void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripService& trip_service,
                             const RoadGraph* graph = nullptr, const SpatialGrid* grid = nullptr) {
-    // RBAC Authenticate Helper Lambda
-    auto authenticate_user = [&](const HttpRequest& req, HttpResponse& res,
-                                 const std::vector<std::string>& allowed_roles = {}) -> std::optional<User> {
-        std::string token = req.get_bearer_token();
-        if (token.empty()) {
-            token = req.get_param("token");
-        }
-        if (token.empty()) {
-            res.set_json("{\"success\":false,\"code\":\"AUTH_TOKEN_MISSING\",\"error\":\"Vui lòng cung cấp token xác thực qua Authorization: Bearer <token>.\"}", 401);
-            return std::nullopt;
-        }
-        auto val = auth_service.validate_token(token);
-        if (!val.success) {
-            res.set_json(val.to_json(), val.status_code);
-            return std::nullopt;
-        }
-        if (!allowed_roles.empty()) {
-            bool role_ok = false;
-            for (const auto& r : allowed_roles) {
-                if (val.user.role == r) {
-                    role_ok = true;
-                    break;
-                }
-            }
-            if (!role_ok) {
-                res.set_json("{\"success\":false,\"code\":\"FORBIDDEN_ROLE\",\"error\":\"Bạn không có quyền thực hiện thao tác này (yêu cầu vai trò phù hợp).\"}", 403);
-                return std::nullopt;
-            }
-        }
-        return val.user;
-    };
-
     // 1. Root /
-    server.get("/", [&](const HttpRequest&, HttpResponse& res) {
+    server.get("/", [](const HttpRequest&, HttpResponse& res) {
         res.set_json("{\"name\":\"GoRide Routing Engine API\",\"version\":\"Phase C.3\",\"status\":\"operational\"}", 200);
     });
 
     // 2. Health check
-    server.get("/api/health", [&](const HttpRequest&, HttpResponse& res) {
+    server.get("/api/health", [](const HttpRequest&, HttpResponse& res) {
         res.set_json("{\"success\":true,\"status\":\"ready\"}", 200);
     });
 
     // 3. POST /api/trips/request
-    auto handle_trip_request = [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res, {"customer", "admin"});
+    auto handle_trip_request = [&auth_service, &trip_service, graph, grid](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res, {"customer", "admin"});
         if (!user) return;
 
         Trip existing_trip;
@@ -140,6 +141,17 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
 
         double haversine_m = goride::dsa::SpatialGrid::haversine_distance_m(p_lat, p_lon, d_lat, d_lon);
         int client_distance_m = static_cast<int>(root.has_key("distanceMeters") ? root["distanceMeters"].as_int64(0) : root["distance_meters"].as_int64(0));
+
+        bool has_dist_key = root.has_key("distanceMeters") || root.has_key("distance_meters");
+        bool has_fare_key = root.has_key("fareAmount") || root.has_key("fare_amount");
+        int raw_dist = static_cast<int>(root.has_key("distanceMeters") ? root["distanceMeters"].as_int64(-1) : root["distance_meters"].as_int64(-1));
+        int raw_fare = static_cast<int>(root.has_key("fareAmount") ? root["fareAmount"].as_int64(-1) : root["fare_amount"].as_int64(-1));
+
+        if ((has_dist_key && raw_dist <= 0) || (has_fare_key && raw_fare <= 0)) {
+            res.set_json("{\"success\":false,\"code\":\"INVALID_DISTANCE_OR_FARE\",\"error\":\"Khoảng cách và giá cước gửi lên phải là số dương lớn hơn 0.\"}", 400);
+            return;
+        }
+
         if (haversine_m > 50.0 && client_distance_m > 0 && client_distance_m < static_cast<int>(haversine_m * 0.7)) {
             res.set_json("{\"success\":false,\"code\":\"INVALID_DISTANCE\",\"error\":\"Khoảng cách lộ trình không thể nhỏ hơn khoảng cách đường chim bay thực tế.\"}", 400);
             return;
@@ -249,8 +261,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     server.post("/trips", handle_trip_request);
 
     // 4. GET /api/trips/active
-    auto handle_active_trip = [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res);
+    auto handle_active_trip = [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res);
         if (!user) return;
 
         Trip active_trip;
@@ -288,8 +300,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     server.get("/trips/active", handle_active_trip);
 
     // 5. GET /api/trips/detail
-    server.get("/api/trips/detail", [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res);
+    server.get("/api/trips/detail", [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res);
         if (!user) return;
 
         std::string trip_id = req.get_param("id", req.get_param("trip_id"));
@@ -318,8 +330,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     });
 
     // 6. POST /api/trips/cancel
-    server.post("/api/trips/cancel", [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res);
+    server.post("/api/trips/cancel", [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res);
         if (!user) return;
 
         std::string trip_id, reason;
@@ -378,8 +390,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     });
 
     // 7. GET /api/driver/offers/pending
-    server.get("/api/driver/offers/pending", [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res, {"driver"});
+    server.get("/api/driver/offers/pending", [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res, {"driver"});
         if (!user) return;
 
         Trip offered_trip;
@@ -414,8 +426,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     });
 
     // 8. POST /api/driver/offers/accept
-    server.post("/api/driver/offers/accept", [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res, {"driver"});
+    server.post("/api/driver/offers/accept", [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res, {"driver"});
         if (!user) return;
 
         std::string trip_id;
@@ -450,8 +462,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     });
 
     // 9. POST /api/driver/offers/reject
-    server.post("/api/driver/offers/reject", [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res, {"driver"});
+    server.post("/api/driver/offers/reject", [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res, {"driver"});
         if (!user) return;
 
         std::string trip_id;
@@ -485,8 +497,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     });
 
     // 10. POST /api/driver/trips/status
-    server.post("/api/driver/trips/status", [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res, {"driver"});
+    server.post("/api/driver/trips/status", [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res, {"driver"});
         if (!user) return;
 
         std::string trip_id, action, status_val;
@@ -546,8 +558,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     });
 
     // 11. GET /api/admin/trips
-    auto handle_admin_trips = [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res, {"admin"});
+    auto handle_admin_trips = [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res, {"admin"});
         if (!user) return;
 
         auto trips = trip_service.list_active_trips();
@@ -569,8 +581,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     server.get("/admin/trips", handle_admin_trips);
 
     // 12. POST /api/admin/trips/offer
-    server.post("/api/admin/trips/offer", [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res, {"admin"});
+    server.post("/api/admin/trips/offer", [&auth_service, &trip_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res, {"admin"});
         if (!user) return;
 
         std::string trip_id, driver_id;
@@ -611,8 +623,8 @@ void register_c3_api_routes(HttpServer& server, AuthService& auth_service, TripS
     });
 
     // 13. PUT & POST /api/auth/profile (Update Profile)
-    auto handle_update_profile = [&](const HttpRequest& req, HttpResponse& res) {
-        auto user = authenticate_user(req, res);
+    auto handle_update_profile = [&auth_service](const HttpRequest& req, HttpResponse& res) {
+        auto user = authenticate_c3_user(auth_service, req, res);
         if (!user) return;
 
         std::string new_name = user->name;

@@ -132,12 +132,12 @@ html, body, .gsm-screen-wrapper, .gsm-desktop-sidebar, .gsm-desktop-wide-canvas,
     border-bottom: 1px solid #e2e8f0;
     position: sticky;
     top: 0;
-    z-index: 1000;
+    z-index: 2147483646 !important;
     box-sizing: border-box !important;
     width: 100% !important;
     max-width: 100% !important;
     white-space: nowrap !important;
-    overflow: hidden !important;
+    overflow: visible !important;
     position: relative !important;
   }
 
@@ -3296,4 +3296,173 @@ body.gsm-role-admin a.gsm-pc-nav-link[href*="admin.html"] {
 #btn-close-searching-corner,
 #btn-close-driver-guard {
   pointer-events: auto !important;
+}
+
+/* ==============================================================
+   GUEST ACCOUNT UNIFIED BUTTON & DROPDOWN (MERGED AUTH TRIGGER)
+   ============================================================== */
+.gsm-guest-menu-wrapper {
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  overflow: visible !important;
+  z-index: 2147483647 !important;
+}
+
+.gsm-guest-account-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  background: #ffffff !important;
+  border: 1.5px solid #cbd5e1 !important;
+  border-radius: 9999px !important;
+  padding: 4px 14px 4px 5px !important;
+  cursor: pointer !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  box-shadow: 0 2px 8px rgba(15, 45, 60, 0.05) !important;
+  font-family: inherit !important;
+  outline: none !important;
+  user-select: none !important;
+}
+
+.gsm-guest-account-btn:hover {
+  border-color: #00b1a9 !important;
+  background: #f0faf9 !important;
+  box-shadow: 0 4px 14px rgba(0, 177, 169, 0.18) !important;
+  transform: translateY(-1px) !important;
+}
+
+.gsm-guest-account-btn:active {
+  transform: scale(0.96) !important;
+}
+
+.gsm-guest-avatar-icon {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  background: #e6f7f6 !important;
+  color: #00b1a9 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 1.1rem !important;
+  border: 1px solid #a7f3d0 !important;
+  flex-shrink: 0 !important;
+  transition: all 0.2s ease !important;
+}
+
+.gsm-guest-account-btn:hover .gsm-guest-avatar-icon {
+  background: #00b1a9 !important;
+  color: #ffffff !important;
+  border-color: #00b1a9 !important;
+}
+
+.gsm-guest-account-label {
+  font-size: 0.88rem !important;
+  font-weight: 700 !important;
+  color: #0f2d3c !important;
+  white-space: nowrap !important;
+}
+
+.gsm-guest-account-arrow {
+  font-size: 0.7rem !important;
+  color: #64748b !important;
+  transition: transform 0.2s ease !important;
+}
+
+.gsm-guest-account-btn.open .gsm-guest-account-arrow {
+  transform: rotate(180deg) !important;
+}
+
+.gsm-guest-dropdown {
+  display: none;
+  position: absolute !important;
+  top: calc(100% + 10px) !important;
+  right: 0 !important;
+  min-width: 250px !important;
+  background: #ffffff !important;
+  border: 1.5px solid #e2e8f0 !important;
+  border-radius: 20px !important;
+  box-shadow: 0 20px 50px rgba(15, 45, 60, 0.25), 0 4px 15px rgba(0, 0, 0, 0.08) !important;
+  padding: 14px !important;
+  z-index: 2147483647 !important;
+  box-sizing: border-box !important;
+  pointer-events: auto !important;
+  animation: liquidPop 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.gsm-guest-dropdown.show,
+.gsm-guest-dropdown[style*="display: block"],
+.gsm-guest-dropdown[style*="display:block"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+@keyframes liquidPop {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.gsm-guest-dropdown-header {
+  padding: 4px 8px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 10px;
+}
+
+.gsm-guest-dropdown-title {
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: #0f2d3c;
+}
+
+.gsm-guest-dropdown-sub {
+  font-size: 0.74rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.gsm-guest-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  text-decoration: none;
+  font-size: 0.88rem;
+  font-weight: 700;
+  transition: all 0.16s ease;
+  cursor: pointer;
+}
+
+.gsm-guest-dropdown-item.item-login {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #00b1a9, #008983);
+  box-shadow: 0 4px 12px rgba(0, 177, 169, 0.28);
+  margin-bottom: 8px;
+}
+
+.gsm-guest-dropdown-item.item-login:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 177, 169, 0.38);
+  background: linear-gradient(135deg, #00c0b7, #009e96);
+}
+
+.gsm-guest-dropdown-item.item-register {
+  color: #0f2d3c !important;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+}
+
+.gsm-guest-dropdown-item.item-register:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  transform: translateY(-1px);
 }

@@ -373,7 +373,7 @@ class CustomerAppController {
         // Realtime cross-tab sync with driver portal
         window.addEventListener('storage', (e) => {
             const isTripActive = this.activeTrip && ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes((this.activeTrip.status || '').toUpperCase());
-            if (e.key === 'goride_active_trip' || e.key === 'goride_admin_trips' || (e.key === 'goride_online_drivers' && isTripActive)) {
+            if (e.key === 'goride_active_trip' || e.key === 'goride_admin_trips' || e.key === 'goride_trip_accepted_event' || e.key === 'goride_trip_progress_event' || (e.key === 'goride_online_drivers' && isTripActive)) {
                 try {
                     let act = JSON.parse(localStorage.getItem('goride_active_trip') || 'null');
                     if (!act && e.key === 'goride_admin_trips') {
@@ -909,6 +909,30 @@ class CustomerAppController {
         if (service && this.vehicleCatalog[service]) {
             this.selectedService = service;
             this.updateVehicleTabsUI(service);
+        } else if (service) {
+            const inDevMap = {
+                food: { name: 'Đồ ăn', icon: '🍔' },
+                rental: { name: 'Thuê xe tự lái', icon: '🚗' },
+                gift: { name: 'Thẻ quà tặng', icon: '🎁' },
+                vinbus: { name: 'VinBus', icon: '🚌' },
+                membership: { name: 'Hội viên', icon: '💎' }
+            };
+            if (inDevMap[service]) {
+                setTimeout(() => {
+                    if (typeof window.showFeatureInDevelopment === 'function') {
+                        window.showFeatureInDevelopment(inDevMap[service].name, inDevMap[service].icon);
+                    } else if (typeof window.showNavigoModal === 'function') {
+                        window.showNavigoModal({
+                            title: inDevMap[service].name,
+                            message: 'Tính năng đang phát triển',
+                            icon: inDevMap[service].icon,
+                            confirmText: 'Đã hiểu',
+                            showCancel: false,
+                            onConfirm: () => {}
+                        });
+                    }
+                }, 400);
+            }
         }
 
         if (dest) {
@@ -1572,9 +1596,19 @@ class CustomerAppController {
                 this.paymentMethod = this.paymentMethod === 'cash' ? 'wallet' : 'cash';
                 const label = document.getElementById('current-payment-method');
                 if (label) {
-                    label.textContent = this.paymentMethod === 'cash' ? 'Tiền mặt' : 'Ví Navigo Pay';
+                    label.textContent = this.paymentMethod === 'cash' ? 'Tiền mặt/QR' : 'Ví Navigo Pay';
                 }
-                this.showToast(`Phương thức thanh toán: ${this.paymentMethod === 'cash' ? 'Tiền mặt' : 'Ví Navigo Pay'}`, 'info');
+                const iconSpan = btnPayment.querySelector('span:first-child');
+                if (iconSpan) {
+                    iconSpan.textContent = this.paymentMethod === 'cash' ? '💵' : '💳';
+                }
+                if (this.paymentMethod === 'wallet' && window.NaviWalletEngine) {
+                    const curWallet = window.NaviWalletEngine.getCurrentWallet();
+                    const bal = curWallet ? (window.formatVND ? window.formatVND(curWallet.balance) : (curWallet.balance + ' ₫')) : '0 ₫';
+                    this.showToast(`💳 Đã chọn Ví Navigo Pay (Số dư: ${bal})`, 'success', 3500);
+                } else {
+                    this.showToast('💵 Đã chọn thanh toán Tiền mặt', 'info', 3000);
+                }
             });
         }
 
@@ -3296,6 +3330,7 @@ class CustomerAppController {
         if (trip) {
             this.activeTrip = trip;
             this.activeTripId = trip.id;
+            this.paymentMethod = trip.paymentMethod || (trip.paidByWallet || trip.walletDeducted ? 'wallet' : 'cash');
 
             // Sync pickup & dropoff coordinates
             if (trip.pickup && trip.pickup.lat && (trip.pickup.lng || trip.pickup.lon)) {
@@ -3498,26 +3533,16 @@ class CustomerAppController {
             }
 
             custWalletPhone = curWallet.accountNumber || custWalletPhone;
-            // Deduct customer wallet directly upfront
-            try {
-                const payRes = window.NaviWalletEngine.payTrip(custWalletPhone, estFare, 'RIDE_' + Date.now(), {
-                    pickupName: this.pickup?.name || this.pickup?.address,
-                    dropoffName: this.destination?.name || this.destination?.address
-                });
-                isWalletPaid = !!(payRes && payRes.success);
-            } catch (payErr) {
-                console.error('[CustomerApp] Wallet deduction error:', payErr);
-                this.showToast('Lỗi thanh toán Ví Navi: ' + (payErr.message || ''), 'error');
-                if (btnSolicitar) {
-                    btnSolicitar.disabled = false;
-                    btnSolicitar.innerHTML = `Xác nhận đặt ${vConfig.name} &bull; ${this.formatMoney(estFare)}`;
-                }
-                return;
-            }
+            const tripTrackingId = `TRP-${Math.floor(10000 + Math.random() * 90000)}`;
+            this._lastWalletTxnTripId = tripTrackingId;
+            // Balance is sufficient: do NOT deduct upfront. Money is only deducted upon SUCCESSFUL completion.
+            isWalletPaid = true;
         }
 
+        const canonicalVehicleType = this.normalizeVehicleType(this.selectedService || vInfo.type || 'car4');
+
         const tripPayload = {
-            vehicleType: vInfo.type,
+            vehicleType: canonicalVehicleType,
             vehicleTypeName: vInfo.name,
             vehicleIcon: vInfo.icon,
             pickupLat: Number(this.pickup.lat),
@@ -3557,11 +3582,15 @@ class CustomerAppController {
                     lng: Number(this.destination.lng)
                 };
                 createdTrip.routeGeometry = (Array.isArray(this.currentRouteGeometry) && this.currentRouteGeometry.length > 1) ? this.currentRouteGeometry : (typeof this.getStreetFollowingPath === 'function' ? this.getStreetFollowingPath(this.pickup, this.destination) : null);
-                createdTrip.walletDeducted = isWalletPaid;
+                createdTrip.walletDeducted = false;
                 createdTrip.paidByWallet = isWalletPaid;
+                createdTrip.paymentMethod = this.paymentMethod || 'cash';
                 createdTrip.customerPhone = custWalletPhone;
+                createdTrip.vehicleType = canonicalVehicleType;
+                createdTrip.vehicleTypeName = vInfo.name;
                 createdTrip.fare = estFare;
                 createdTrip.fareAmount = estFare;
+                createdTrip.targetedDriverIds = ['*'];
                 this.activeTrip = createdTrip;
                 this.activeTripId = createdTrip.id;
 
@@ -3569,14 +3598,6 @@ class CustomerAppController {
                 try {
                     const adminTrips = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
                     const currentUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
-            if (!currentUser || !currentUser.id) {
-                if (btnSolicitar) {
-                    btnSolicitar.disabled = false;
-                    btnSolicitar.innerHTML = `Xác nhận đặt ${vConfig.name} &bull; ${this.formatMoney(estFare)}`;
-                }
-                return;
-            }
-                    createdTrip.vehicleType = vInfo.type;
                     createdTrip.customerName = currentUser?.name || 'Khách hàng Navigo';
                     createdTrip.customerPhone = currentUser?.phone || '0901234567';
                     createdTrip.customerId = currentUser?.id || 'cust_01';
@@ -3606,16 +3627,22 @@ class CustomerAppController {
                         dropoffLat: Number(this.destination.lat),
                         dropoffLon: Number(this.destination.lng),
                         routeGeometry: (Array.isArray(this.currentRouteGeometry) && this.currentRouteGeometry.length > 1) ? this.currentRouteGeometry : (typeof this.getStreetFollowingPath === 'function' ? this.getStreetFollowingPath(this.pickup, this.destination) : null),
-                fare: estFare,
+                        fare: estFare,
+                        fareAmount: estFare,
                         distance: (estDist / 1000).toFixed(1),
                         duration: Math.max(3, Math.round(estDist / 350)),
-                        vehicleType: vInfo.type,
+                        vehicleType: canonicalVehicleType,
                         vehicleTypeName: vInfo.name,
                         status: 'requested',
+                        paymentMethod: this.paymentMethod || 'cash',
+                        paidByWallet: isWalletPaid,
+                        walletDeducted: false,
+                        targetedDriverIds: ['*'],
                         createdAt: new Date().toISOString()
                     });
                     localStorage.setItem('goride_admin_trips', JSON.stringify(adminTrips));
                     localStorage.setItem('goride_pending_trip_offers', JSON.stringify([createdTrip]));
+                    localStorage.setItem('goride_last_trip_event', JSON.stringify({ id: createdTrip.id, time: Date.now() }));
                     localStorage.setItem('goride_active_trip', JSON.stringify({
                         id: createdTrip.id,
                         status: (createdTrip.status || 'REQUESTED').toUpperCase(),
@@ -3625,6 +3652,9 @@ class CustomerAppController {
                         licensePlate: createdTrip.licensePlate || '',
                         vehicleModel: createdTrip.vehicleModel || '',
                         driverRating: createdTrip.driverRating || '5.0',
+                        paymentMethod: this.paymentMethod || 'cash',
+                        paidByWallet: isWalletPaid,
+                        walletDeducted: false,
                         pickup: {
                             name: this.pickup.name,
                             address: this.pickup.address || this.pickup.name,
@@ -3639,8 +3669,9 @@ class CustomerAppController {
                         },
                         fareAmount: estFare,
                         distanceMeters: estDist,
-                        vehicleType: vType,
+                        vehicleType: canonicalVehicleType,
                         routeGeometry: createdTrip.routeGeometry,
+                        targetedDriverIds: ['*'],
                         createdAt: new Date().toISOString()
                     }));
                 } catch (e) {}
@@ -3676,7 +3707,7 @@ class CustomerAppController {
             console.error('[CustomerApp] Ride booking fallback notice:', err);
 
             if (err.status === 409) {
-                if (isWalletPaid && window.NaviWalletEngine) {
+                if (isWalletPaid && window.NaviWalletEngine && this.activeTrip?.walletDeducted === true) {
                     try { window.NaviWalletEngine.refundTrip(custWalletPhone, estFare, 'ERR_409', 'Chuyến xe đang hoạt động'); } catch (e) {}
                 }
                 if (btnCancelRequest) btnCancelRequest.style.display = 'none';
@@ -3687,7 +3718,7 @@ class CustomerAppController {
             }
 
             if (err.status === 422) {
-                if (isWalletPaid && window.NaviWalletEngine) {
+                if (isWalletPaid && window.NaviWalletEngine && this.activeTrip?.walletDeducted === true) {
                     try { window.NaviWalletEngine.refundTrip(custWalletPhone, estFare, 'ERR_422', 'Tọa độ ngoài phạm vi mạng lưới'); } catch (e) {}
                 }
                 if (btnSolicitar) {
@@ -3711,7 +3742,7 @@ class CustomerAppController {
             }
 
             const offlineTrip = {
-                id: `TRP-${Math.floor(10000 + Math.random() * 90000)}`,
+                id: this._lastWalletTxnTripId || `TRP-${Math.floor(10000 + Math.random() * 90000)}`,
                 status: 'REQUESTED',
                 customerName: currentUser?.name || 'Khách hàng Navigo',
                 customerPhone: currentUser?.phone || '0901234567',
@@ -3750,11 +3781,12 @@ class CustomerAppController {
                 distance: (estDist / 1000).toFixed(1),
                 duration: Math.max(3, Math.round(estDist / 350)),
                 customerId: currentUser?.id || 'cust_01',
-                vehicleType: vInfo.type,
+                vehicleType: canonicalVehicleType,
                 vehicleTypeName: vInfo.name,
                 vehicleIcon: vInfo.icon,
-                walletDeducted: isWalletPaid,
+                walletDeducted: false,
                 paidByWallet: isWalletPaid,
+                paymentMethod: this.paymentMethod || 'cash',
                 customerPhone: custWalletPhone,
                 routeGeometry: (Array.isArray(this.currentRouteGeometry) && this.currentRouteGeometry.length > 1) ? this.currentRouteGeometry : (typeof this.getStreetFollowingPath === 'function' ? this.getStreetFollowingPath(this.pickup, this.destination) : null),
                 fare: estFare
@@ -3778,11 +3810,16 @@ class CustomerAppController {
                     dropoffLat: Number(this.destination.lat),
                     dropoffLon: Number(this.destination.lng),
                     routeGeometry: (Array.isArray(this.currentRouteGeometry) && this.currentRouteGeometry.length > 1) ? this.currentRouteGeometry : (typeof this.getStreetFollowingPath === 'function' ? this.getStreetFollowingPath(this.pickup, this.destination) : null),
-                fare: estFare,
+                    fare: estFare,
+                    fareAmount: estFare,
                     distance: (estDist / 1000).toFixed(1),
-                    vehicleType: vInfo.type,
+                    vehicleType: canonicalVehicleType,
                     vehicleTypeName: vInfo.name,
                     status: 'requested',
+                    paymentMethod: this.paymentMethod || 'cash',
+                    paidByWallet: isWalletPaid,
+                    walletDeducted: false,
+                    targetedDriverIds: ['*'],
                     createdAt: new Date().toISOString()
                 });
                 localStorage.setItem('goride_admin_trips', JSON.stringify(adminTrips));
@@ -3800,6 +3837,9 @@ class CustomerAppController {
                     driverRating: '5.0',
                     driverLat: null,
                     driverLon: null,
+                    paymentMethod: this.paymentMethod || 'cash',
+                    paidByWallet: isWalletPaid,
+                    walletDeducted: false,
                     pickup: {
                         name: this.pickup.name,
                         address: this.pickup.address || this.pickup.name,
@@ -3814,12 +3854,13 @@ class CustomerAppController {
                     },
                     fareAmount: estFare,
                     distanceMeters: estDist,
-                    vehicleType: vInfo.type,
+                    vehicleType: canonicalVehicleType,
                     vehicleTypeName: vInfo.name,
                     vehicleIcon: vInfo.icon,
-                    walletDeducted: isWalletPaid,
+                    walletDeducted: false,
                     paidByWallet: isWalletPaid,
                     customerPhone: custWalletPhone,
+                    targetedDriverIds: ['*'],
                     createdAt: new Date().toISOString()
                 }));
             } catch (e) {}
@@ -3837,7 +3878,7 @@ class CustomerAppController {
             this.showRadarAtPickup(Number(this.pickup.lat), Number(this.pickup.lng));
             this.updateTrackingUI(offlineTrip);
             this.startActiveTripPolling(offlineTrip.id);
-            this.initiateDriverDispatch(offlineTrip, vInfo.type, this.pickup.lat, this.pickup.lng);
+            this.initiateDriverDispatch(offlineTrip, canonicalVehicleType, this.pickup.lat, this.pickup.lng);
             if (typeof navigoNotifications !== 'undefined') {
                 navigoNotifications.addNotification({
                     id: 'trip_req_' + offlineTrip.id,
@@ -3951,10 +3992,9 @@ class CustomerAppController {
             const eligible = driversList.filter(d => {
                 if (!d) return false;
                 if (d.isOnline === false) return false;
-                if (vType && d.vehicleType && d.vehicleType !== vType) {
-                    const isBikeMatch = (vType === 'motorbike' || vType === 'bike') && (d.vehicleType === 'motorbike' || d.vehicleType === 'bike');
-                    if (!isBikeMatch) return false;
-                }
+                const tripVType = this.normalizeVehicleType(vType || trip.vehicleType);
+                const drvVType = this.normalizeVehicleType(d.vehicleType || d.vehicle?.type || d.type);
+                if (tripVType !== drvVType) return false;
                 const dLat = Number(d.lat || (d.location && d.location.lat));
                 const dLng = Number(d.lng || (d.location && d.location.lng));
                 if (isNaN(dLat) || isNaN(dLng) || (dLat === 0 && dLng === 0)) return false;
@@ -4023,19 +4063,15 @@ class CustomerAppController {
 
         const initialEligible = await fetchEligibleDrivers();
 
+        // Luôn phát sóng tới các tài xế trực tuyến có cùng loại xe trong bán kính hoạt động
+        const targetedIdsPhase1 = ['*', ...initialEligible.map(d => d.id || d.phone || d.name)];
+        updateTripTargets(targetedIdsPhase1);
+
         if (initialEligible.length === 0) {
-            // Không có tài xế nào trong bán kính 20km: targetedDriverIds = [] (KHÔNG phát wildcard '*')
-            updateTripTargets([]);
             const statusText = document.getElementById('tracking-status-text');
             if (statusText) {
-                statusText.textContent = 'Đang tìm xe... Hiện chưa có tài xế trực tuyến trong bán kính 15km từ điểm đón.';
+                statusText.textContent = 'Đang phát tín hiệu tìm xe gần bạn nhất...';
             }
-            this.showToast('Hệ thống đang quét tìm xe... Chưa có tài xế trực tuyến trong phạm vi 15km.', 'warning', 4500);
-        } else {
-            // Giai đoạn 1 (0s): Chuyển thông tin tới 2 tài xế gần nhất (trong phạm vi <= 15km)
-            const phase1Drivers = initialEligible.slice(0, 2);
-            const targetedIdsPhase1 = phase1Drivers.map(d => d.id || d.phone || d.name);
-            updateTripTargets(targetedIdsPhase1);
         }
 
         // Giai đoạn 2 (30s): Mở rộng tới 4 tài xế gần nhất trong bán kính <= 15km
@@ -4153,8 +4189,15 @@ class CustomerAppController {
                     localStorage.setItem('goride_admin_trips', JSON.stringify(adminTrips));
                 }
                 localStorage.removeItem('goride_pending_trip_offers');
-                // Refund fare to customer wallet if trip was paid by NaviPay wallet
-                if (window.NaviWalletEngine && this.activeTrip && (this.activeTrip.walletDeducted || this.activeTrip.paidByWallet)) {
+
+                // Broadcast instant cancellation signal to any listening driver portals
+                localStorage.setItem('goride_trip_cancelled_event', JSON.stringify({
+                    tripId: tripId,
+                    timestamp: Date.now(),
+                    reason: reason
+                }));
+                // Refund fare to customer wallet ONLY if trip was actually deducted before
+                if (window.NaviWalletEngine && this.activeTrip && this.activeTrip.walletDeducted === true) {
                     const curUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
                     const refundPhone = this.activeTrip.customerPhone || curUser?.phone || '0901234567';
                     const refundFare = Number(this.activeTrip.fareAmount || this.activeTrip.fare || this.selectedVehicleFare || 0);
@@ -4338,6 +4381,22 @@ class CustomerAppController {
                         this.cancelPendingBooking('Tự động hủy do hết 15 phút không có tài xế nhận cuốc');
                         return;
                     }
+                }
+            });
+        }
+
+        if (!this._storageTripListenerAttached) {
+            this._storageTripListenerAttached = true;
+            window.addEventListener('storage', (e) => {
+                if (e.key === 'goride_trip_arrived_event') {
+                    try {
+                        const arrEv = JSON.parse(e.newValue || '{}');
+                        if (this.activeTrip && String(this.activeTrip.id) === String(arrEv.tripId)) {
+                            this.activeTrip.status = 'ARRIVED';
+                            this.showToast('🔔 Tài xế đã có mặt tại điểm hẹn đón! Xin vui lòng ra xe.', 'warning', 6000);
+                            this.updateTrackingUI(this.activeTrip);
+                        }
+                    } catch(err) {}
                 }
             });
         }
@@ -4531,8 +4590,19 @@ class CustomerAppController {
                                 actionText: 'Xem tài xế'
                             });
                         }
-                    } else if (prevStatus === 'ACCEPTED' && currentTrip.status === 'ARRIVED') {
-                        this.showToast('Tài xế đã có mặt tại điểm đón! Xin vui lòng ra xe.', 'info', 4500);
+                    } else if (currentTrip.status === 'ARRIVED' && prevStatus !== 'ARRIVED') {
+                        this.showToast('🔔 Tài xế đã có mặt tại điểm đón! Xin vui lòng ra xe.', 'warning', 6000);
+                        if (typeof navigoNotifications !== 'undefined') {
+                            navigoNotifications.addNotification({
+                                id: 'trip_arrived_' + currentTrip.id + '_' + Date.now(),
+                                category: 'trips',
+                                title: 'TÀI XẾ ĐÃ ĐẾN NƠI!',
+                                body: 'Tài xế ' + (currentTrip.driverName || 'đối tác') + ' đã có mặt tại điểm hẹn. Vui lòng di chuyển ra xe để bắt đầu chuyến đi.',
+                                icon: '📍',
+                                actionUrl: 'customer.html',
+                                actionText: 'Xem vị trí xe'
+                            });
+                        }
                     } else if (prevStatus === 'ARRIVED' && currentTrip.status === 'IN_PROGRESS') {
                         this.showToast('Chuyến xe bắt đầu lăn bánh...', 'info', 4000);
                     } else if (currentTrip.status === 'COMPLETED') {
@@ -4679,6 +4749,15 @@ class CustomerAppController {
                 btnCallDriver.onclick = () => {
                     const phone = trip.driverPhone || '0901234567';
                     window.location.href = `tel:${phone}`;
+                };
+            }
+            const btnChatDriver = document.getElementById('btn-chat-driver');
+            if (btnChatDriver) {
+                btnChatDriver.onclick = () => {
+                    const msg = prompt('Gửi tin nhắn nhanh tới tài xế (VD: Tôi đang đứng ở sảnh / Tôi mặc áo xanh):', 'Tôi đang chờ ở điểm đón.');
+                    if (msg && msg.trim()) {
+                        this.showToast('💬 Đã gửi tin nhắn tới tài xế: "' + msg.trim() + '"', 'success', 4000);
+                    }
                 };
             }
 
@@ -5009,6 +5088,57 @@ class CustomerAppController {
         const fareAmount = this.formatMoney(trip ? trip.fareAmount : 45000);
         const tripCode = trip ? trip.id : `TRP-${Date.now()}`;
         const driverTitle = trip && trip.driverName ? `${trip.driverName} (${trip.licensePlate || 'Xe đối tác'})` : 'Tài xế Navigo đối tác';
+
+        // Only truly deduct customer wallet upon successful completion
+        const isPaidWallet = !!(
+            this.paymentMethod === 'wallet' ||
+            tripData?.paidByWallet ||
+            tripData?.paymentMethod === 'wallet'
+        );
+        if (isPaidWallet && window.NaviWalletEngine) {
+            // 1. Deduct customer wallet upon successful completion (isolated)
+            try {
+                const currentUser = (typeof sessionManager !== 'undefined') ? (sessionManager.getUser?.() || sessionManager.getCurrentUser?.()) : null;
+                const custPhone = tripData?.customerPhone || currentUser?.phone || '0901234567';
+                const fareNum = Number(tripData?.fareAmount || tripData?.fare) || 45000;
+                const curW = window.NaviWalletEngine.getWallet(custPhone);
+                const alreadyDeducted = curW && Array.isArray(curW.transactions) && curW.transactions.some(t => t.tripId === tripCode || (t.id && t.id.includes(tripCode)));
+                if (!alreadyDeducted) {
+                    window.NaviWalletEngine.payTrip(custPhone, fareNum, tripCode, {
+                        pickupName: tripData?.pickupName || (tripData?.pickup && tripData.pickup.name) || 'Điểm đón',
+                        dropoffName: tripData?.dropoffName || (tripData?.destination && tripData.destination.name) || 'Điểm đến'
+                    });
+                }
+            } catch (err) {
+                console.warn('[CustomerWallet] Completion deduction sync notice:', err);
+            }
+
+            // 2. ALSO credit driver wallet immediately upon trip completion (isolated & guaranteed!)
+            try {
+                const fareNum = Number(tripData?.fareAmount || tripData?.fare) || 45000;
+                const targetDriverPhones = new Set();
+                if (tripData?.driverPhone) targetDriverPhones.add(tripData.driverPhone);
+                if (trip && trip.driverPhone) targetDriverPhones.add(trip.driverPhone);
+                try {
+                    const adm = JSON.parse(localStorage.getItem('goride_admin_trips') || '[]');
+                    const tMatch = adm.find(t => t && (t.id === tripCode));
+                    if (tMatch && tMatch.driverPhone) targetDriverPhones.add(tMatch.driverPhone);
+                } catch(e) {}
+                targetDriverPhones.add('0918765432');
+
+                targetDriverPhones.forEach(dPhone => {
+                    if (!dPhone) return;
+                    window.NaviWalletEngine.creditDriverTrip(dPhone, fareNum, tripCode, {
+                        customerName: tripData?.customerName || (typeof sessionManager !== 'undefined' ? sessionManager.getUser?.()?.name : 'Khách hàng Navigo') || 'Khách hàng Navigo',
+                        customerPhone: tripData?.customerPhone || '0901234567',
+                        pickup: tripData?.pickupName || (tripData?.pickup && tripData.pickup.name) || 'Điểm đón',
+                        destination: tripData?.dropoffName || (tripData?.destination && tripData.destination.name) || 'Điểm đến'
+                    });
+                });
+            } catch (drvErr) {
+                console.warn('[CustomerWallet] Driver credit notice:', drvErr);
+            }
+        }
         if (typeof navigoNotifications !== 'undefined') {
             navigoNotifications.addNotification({
                 id: 'trip_done_' + tripCode,

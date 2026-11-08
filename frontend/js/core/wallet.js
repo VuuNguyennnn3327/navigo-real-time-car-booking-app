@@ -213,16 +213,13 @@
             }
             // Check fallback keys
             try {
-                const rawUser = sessionStorage.getItem('navigo_user') || localStorage.getItem('navigo_user');
+                const rawUser = sessionStorage.getItem('navigo_user') || localStorage.getItem('navigo_user') || localStorage.getItem('goride_user');
                 if (rawUser) return JSON.parse(rawUser);
             } catch (e) {}
             return null;
         },
 
         getActivePhone() {
-            const user = this.getCurrentUser();
-            if (!user) return null;
-
             if (typeof window !== 'undefined' && window.location && window.location.search) {
                 try {
                     const params = new URLSearchParams(window.location.search);
@@ -231,8 +228,18 @@
                         const cleanP = normalizePhone(p);
                         if (cleanP) return cleanP;
                     }
+                    if (params.get('role') === 'driver') {
+                        const user = this.getCurrentUser();
+                        if (user && user.phone) {
+                            const dp = normalizePhone(user.phone);
+                            if (dp) return dp;
+                        }
+                        return '0918765432';
+                    }
                 } catch(e) {}
             }
+            const user = this.getCurrentUser();
+            if (!user) return null;
             const uPhone = normalizePhone(user.phone);
             if (uPhone) return uPhone;
             return user.role === 'driver' ? '0918765432' : '0901234567';
@@ -260,22 +267,21 @@
         },
 
         getCurrentWallet() {
-            const user = this.getCurrentUser();
-            if (!user) return null;
             const phone = this.getActivePhone();
             if (!phone) return null;
             let wallet = this.getWallet(phone);
 
             // If user exists but wallet not initialized in storage, create initialized wallet starting with 0 VND
             if (!wallet) {
+                const user = this.getCurrentUser();
                 const rawName = user ? (user.name || user.fullName || '') : '';
-                const role = user ? (user.role || (phone === '0918765432' ? 'driver' : 'customer')) : (phone === '0918765432' ? 'driver' : 'customer');
+                const role = (phone === '0918765432' || (user && user.role === 'driver')) ? 'driver' : 'customer';
                 const defaultName = role === 'driver' ? 'TRAN VAN BINH' : 'NGUYEN VAN AN';
                 const cleanName = removeVietnameseTones(rawName) || defaultName;
                 
                 // Real starting balance: default starts at 0 ₫ (ignore stale mock 500000 or 1250000)
                 let seedBal = 0;
-                if (user && typeof user.walletBalance === 'number' && user.walletBalance > 0 && 
+                if (user && user.role === role && typeof user.walletBalance === 'number' && user.walletBalance > 0 && 
                     user.walletBalance !== 500000 && user.walletBalance !== 1250000 && 
                     user.walletBalance !== 350000 && user.walletBalance !== 1450000) {
                     seedBal = user.walletBalance;
@@ -306,16 +312,19 @@
                 this._saveAllWallets(wallets, false);
             }
 
-            // Sync user session walletBalance with current wallet balance
-            if (user && user.walletBalance !== wallet.balance) {
-                user.walletBalance = wallet.balance;
-                try {
-                    localStorage.setItem('goride_user', JSON.stringify(user));
-                    localStorage.setItem('navigo_user', JSON.stringify(user));
-                    if (typeof window.sessionManager !== 'undefined' && window.sessionManager.currentUser) {
-                        window.sessionManager.currentUser.walletBalance = wallet.balance;
-                    }
-                } catch(e) {}
+            // Sync user session walletBalance with current wallet balance if matching role
+            const user = this.getCurrentUser();
+            if (user && ((wallet.role === 'driver' && user.role === 'driver') || (wallet.role === 'customer' && user.role !== 'driver'))) {
+                if (user.walletBalance !== wallet.balance) {
+                    user.walletBalance = wallet.balance;
+                    try {
+                        localStorage.setItem('goride_user', JSON.stringify(user));
+                        localStorage.setItem('navigo_user', JSON.stringify(user));
+                        if (typeof window.sessionManager !== 'undefined' && window.sessionManager.currentUser) {
+                            window.sessionManager.currentUser.walletBalance = wallet.balance;
+                        }
+                    } catch(e) {}
+                }
             }
 
             return wallet;
@@ -572,7 +581,7 @@
         creditDriverTrip(driverPhone, fareAmount, tripId, tripInfo = {}) {
             const cleanPhone = normalizePhone(driverPhone);
             const fare = Math.max(0, Math.round(Number(fareAmount) || 0));
-            if (fare <= 0) return;
+            if (fare <= 0) return null;
 
             const wallets = this.getAllWallets();
             let wallet = wallets[cleanPhone] || this.getWallet(cleanPhone);
@@ -586,6 +595,14 @@
                     createdAt: new Date().toISOString(),
                     transactions: []
                 };
+            }
+
+            // Guarantee idempotency: prevent duplicate crediting for the same trip
+            if (tripId && Array.isArray(wallet.transactions)) {
+                const already = wallet.transactions.some(t => t && (t.tripId === tripId || (t.id && t.id.includes(tripId))));
+                if (already) {
+                    return { wallet, alreadyCredited: true };
+                }
             }
 
             wallet.balance = (wallet.balance || 0) + fare;
@@ -611,7 +628,7 @@
                 const curUser = this.getCurrentUser();
                 if (curUser) {
                     const uPhone = normalizePhone(curUser.phone) || (curUser.role === 'driver' ? '0918765432' : '0901234567');
-                    if (uPhone === cleanPhone) {
+                    if (uPhone === cleanPhone || curUser.role === 'driver') {
                         curUser.walletBalance = wallet.balance;
                         localStorage.setItem('goride_user', JSON.stringify(curUser));
                         localStorage.setItem('navigo_user', JSON.stringify(curUser));

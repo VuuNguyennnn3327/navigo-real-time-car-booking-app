@@ -311,17 +311,24 @@
                     throw new Error('Số điện thoại này đã được đăng ký. Vui lòng sử dụng số điện thoại khác.');
                 }
 
-                // 2. Check duplicate in Firebase Cloud
-                if (window.realtimeSync && window.realtimeSync.isAvailable()) {
+                // 2. Check duplicate in Firebase Cloud (both SDK & REST fallback)
+                if (window.realtimeSync) {
                     try {
-                        const snapUsers = await window.realtimeSync.db.ref('goride_users').once('value');
-                        const cloudUsers = snapUsers.val() || {};
-                        const userValues = Object.values(cloudUsers);
-                        if (userValues.some(u => u && u.email && u.email.toLowerCase() === email.toLowerCase())) {
-                            throw new Error('Email này đã được đăng ký trên hệ thống. Vui lòng đăng nhập.');
+                        let cloudUsers = null;
+                        if (window.realtimeSync.isAvailable()) {
+                            const snapUsers = await window.realtimeSync.db.ref('goride_users').once('value');
+                            cloudUsers = snapUsers.val();
+                        } else if (typeof window.realtimeSync._restGet === 'function') {
+                            cloudUsers = await window.realtimeSync._restGet('goride_users');
                         }
-                        if (userValues.some(u => u && u.phone && u.phone === phone)) {
-                            throw new Error('Số điện thoại này đã được đăng ký trên hệ thống. Vui lòng dùng số khác.');
+                        if (cloudUsers && typeof cloudUsers === 'object') {
+                            const userValues = Object.values(cloudUsers);
+                            if (userValues.some(u => u && u.email && u.email.toLowerCase() === email.toLowerCase())) {
+                                throw new Error('Email này đã được đăng ký trên hệ thống. Vui lòng đăng nhập.');
+                            }
+                            if (userValues.some(u => u && u.phone && u.phone === phone)) {
+                                throw new Error('Số điện thoại này đã được đăng ký trên hệ thống. Vui lòng dùng số khác.');
+                            }
                         }
                     } catch (fbErr) {
                         if (fbErr.message && fbErr.message.includes('đăng ký')) throw fbErr;

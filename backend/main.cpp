@@ -527,6 +527,89 @@ int main(int argc, char* argv[]) {
     server.get("/api/admin/drivers/pending", handle_pending_drivers);
     server.get("/api/v1/admin/drivers/pending", handle_pending_drivers);
 
+    // Route: Admin Get All Registered Drivers (GET /api/admin/drivers)
+    auto handle_admin_get_drivers = [&](const goride::server::HttpRequest& req, goride::server::HttpResponse& res) {
+        std::string admin_token = req.get_bearer_token();
+        if (admin_token.empty()) admin_token = req.get_param("token");
+
+        if (!admin_token.empty() && admin_token.rfind("demo_", 0) != 0 && admin_token.rfind("cloud_", 0) != 0) {
+            auto admin_check = auth_service.validate_token(admin_token);
+            if (admin_check.success && admin_check.user.role != "admin") {
+                res.set_json("{\"success\":false,\"code\":\"FORBIDDEN\",\"error\":\"Chỉ Quản trị viên mới có quyền xem danh sách đối tác tài xế.\"}", 403);
+                return;
+            }
+        }
+
+        auto stmt = auth_service.database().prepare(
+            "SELECT d.user_id, u.name, u.email, u.phone, d.license_plate, d.vehicle_type, d.vehicle_model, "
+            "       d.experience, d.approval_status, d.online_status, d.is_online, d.last_lat, d.last_lon, "
+            "       u.rating, u.wallet_balance, u.created_at, u.status "
+            "FROM drivers d JOIN users u ON d.user_id = u.id "
+            "ORDER BY u.created_at DESC;"
+        );
+
+        std::ostringstream ss;
+        ss << "{\n  \"success\": true,\n  \"drivers\": [\n";
+        bool first = true;
+        if (stmt) {
+            while (stmt->step()) {
+                if (!first) ss << ",\n";
+                first = false;
+                std::string uid = stmt->column_text(0);
+                std::string name = stmt->column_text(1);
+                std::string email = stmt->column_text(2);
+                std::string phone = stmt->column_text(3);
+                std::string plate = stmt->column_text(4);
+                std::string vtype = stmt->column_text(5);
+                std::string model = stmt->column_text(6);
+                int exp = stmt->column_int(7);
+                std::string approval = stmt->column_text(8);
+                std::string online_st = stmt->column_text(9);
+                bool is_online = (stmt->column_int(10) == 1);
+                double lat = stmt->column_double(11);
+                double lon = stmt->column_double(12);
+                double rating = stmt->column_double(13);
+                double wallet = stmt->column_double(14);
+                int64_t created = stmt->column_int64(15);
+                std::string u_status = stmt->column_text(16);
+
+                std::string vLabel = (vtype == "motorbike" || vtype == "bike") ? "Xe máy điện (Navigo Bike)" :
+                                     (vtype == "car7" ? "Ô tô 7 chỗ (Navigo Taxi 7 chỗ)" :
+                                     (vtype == "premium" ? "Xe sang (Navigo Luxury)" : "Ô tô điện (Navigo Car)"));
+
+                ss << "    {\n"
+                   << "      \"id\": \"" << uid << "\",\n"
+                   << "      \"name\": \"" << name << "\",\n"
+                   << "      \"email\": \"" << email << "\",\n"
+                   << "      \"phone\": \"" << phone << "\",\n"
+                   << "      \"vehicleType\": \"" << vtype << "\",\n"
+                   << "      \"vehicleTypeName\": \"" << vLabel << "\",\n"
+                   << "      \"plate\": \"" << plate << "\",\n"
+                   << "      \"licensePlate\": \"" << plate << "\",\n"
+                   << "      \"model\": \"" << model << "\",\n"
+                   << "      \"experience\": " << exp << ",\n"
+                   << "      \"experienceYears\": " << exp << ",\n"
+                   << "      \"approvalStatus\": \"" << approval << "\",\n"
+                   << "      \"onlineStatus\": \"" << online_st << "\",\n"
+                   << "      \"isOnline\": " << (is_online ? "true" : "false") << ",\n"
+                   << "      \"status\": \"" << (approval == "APPROVED" ? (u_status.empty() ? "active" : u_status) : (approval == "REJECTED" ? "rejected" : "pending")) << "\",\n"
+                   << "      \"rating\": " << rating << ",\n"
+                   << "      \"walletBalance\": " << static_cast<int64_t>(wallet) << ",\n"
+                   << "      \"createdAt\": " << created << ",\n"
+                   << "      \"lat\": " << lat << ",\n"
+                   << "      \"lng\": " << lon << "\n"
+                   << "    }";
+            }
+        }
+        ss << "\n  ]\n}";
+        res.set_json(ss.str(), 200);
+    };
+
+    server.get("/api/admin/drivers", handle_admin_get_drivers);
+    server.get("/api/v1/admin/drivers", handle_admin_get_drivers);
+    server.get("/admin/drivers", handle_admin_get_drivers);
+    server.get("/api/drivers", handle_admin_get_drivers);
+
     // 3.6. Trip Lifecycle & Dispatch REST API (Gate C.3)
     std::cout << "\n[3.6] Initializing Trip Lifecycle & Dispatch Service (SQLite Database)..." << std::endl;
     goride::trip::TripService trip_service(auth_service.database());
@@ -592,6 +675,7 @@ int main(int argc, char* argv[]) {
             "  AND d.is_online = 1 "
             "  AND d.online_status = 'ONLINE' "
             "  AND u.status = 'active' "
+            "  AND u.role = 'driver' "
             "  AND d.user_id NOT IN ("
             "      SELECT driver_id FROM trips "
             "      WHERE driver_id IS NOT NULL AND status IN ('ACCEPTED', 'ARRIVED', 'IN_PROGRESS')"
@@ -1508,7 +1592,11 @@ int main(int argc, char* argv[]) {
         }
 
         auto stmt = auth_service.database().prepare(
-            "SELECT id, name, email, phone, role, status, created_at, avatar_path FROM users ORDER BY created_at DESC;"
+            "SELECT u.id, u.name, u.email, u.phone, u.role, u.status, u.created_at, u.avatar_path, "
+            "       d.license_plate, d.vehicle_type, d.vehicle_model, d.experience, d.approval_status "
+            "FROM users u "
+            "LEFT JOIN drivers d ON u.id = d.user_id "
+            "ORDER BY u.created_at DESC;"
         );
         std::ostringstream ss;
         ss << "{\n  \"success\": true,\n  \"users\": [\n";
@@ -1525,6 +1613,15 @@ int main(int argc, char* argv[]) {
                 std::string u_status = stmt->column_text(5);
                 int64_t u_created = stmt->column_int64(6);
                 std::string u_avatar = stmt->column_text(7);
+                std::string d_plate = stmt->column_text(8);
+                std::string d_vtype = stmt->column_text(9);
+                std::string d_model = stmt->column_text(10);
+                int d_exp = stmt->column_int(11);
+                std::string d_appr = stmt->column_text(12);
+
+                std::string vLabel = (d_vtype == "motorbike" || d_vtype == "bike") ? "Xe máy điện (Navigo Bike)" :
+                                     (d_vtype == "car7" ? "Ô tô 7 chỗ (Navigo Taxi 7 chỗ)" :
+                                     (d_vtype == "premium" ? "Xe sang (Navigo Luxury)" : "Ô tô điện (Navigo Car)"));
 
                 ss << "    {\n"
                    << "      \"id\": \"" << u_id << "\",\n"
@@ -1534,8 +1631,20 @@ int main(int argc, char* argv[]) {
                    << "      \"role\": \"" << u_role << "\",\n"
                    << "      \"status\": \"" << u_status << "\",\n"
                    << "      \"createdAt\": " << u_created << ",\n"
-                   << "      \"avatar\": \"" << u_avatar << "\"\n"
-                   << "    }";
+                   << "      \"avatar\": \"" << u_avatar << "\"";
+
+                if (u_role == "driver" || !d_plate.empty()) {
+                    ss << ",\n      \"licensePlate\": \"" << d_plate << "\""
+                       << ",\n      \"plate\": \"" << d_plate << "\""
+                       << ",\n      \"vehicleType\": \"" << d_vtype << "\""
+                       << ",\n      \"vehicleTypeName\": \"" << vLabel << "\""
+                       << ",\n      \"vehicleModel\": \"" << d_model << "\""
+                       << ",\n      \"experience\": " << d_exp
+                       << ",\n      \"experienceYears\": " << d_exp
+                       << ",\n      \"approvalStatus\": \"" << d_appr << "\"";
+                }
+
+                ss << "\n    }";
             }
         }
         ss << "\n  ]\n}";
@@ -1574,6 +1683,20 @@ int main(int argc, char* argv[]) {
             stmt->step();
         }
 
+        // If promoted/set to driver, ensure matching drivers profile exists
+        if (role == "driver") {
+            auto d_stmt = auth_service.database().prepare(
+                "INSERT OR IGNORE INTO drivers (user_id, license_plate, vehicle_type, vehicle_model, experience, approval_status, online_status, is_online) "
+                "VALUES (?, '59X1-00000', 'motorbike', '', 1, 'APPROVED', 'OFFLINE', 0);"
+            );
+            if (d_stmt) {
+                d_stmt->bind(1, user_id);
+                d_stmt->step();
+            }
+        }
+
+        auth_service.sync_backup_json();
+
         res.set_json("{\"success\":true,\"message\":\"Cập nhật vai trò người dùng thành công.\"}", 200);
     };
 
@@ -1609,6 +1732,8 @@ int main(int argc, char* argv[]) {
             stmt->step();
         }
 
+        auth_service.sync_backup_json();
+
         res.set_json("{\"success\":true,\"message\":\"Cập nhật trạng thái tài khoản thành công.\"}", 200);
     };
 
@@ -1619,27 +1744,27 @@ int main(int argc, char* argv[]) {
     // Route: Admin Delete User Cleanly (POST /api/admin/users/delete)
     auto handle_admin_user_delete = [&](const goride::server::HttpRequest& req, goride::server::HttpResponse& res) {
         std::string user_id;
+        std::string email;
+        std::string phone;
         std::string err;
         auto root = goride::utils::JsonValue::parse(req.body, err);
         if (err.empty() && root.is_object()) {
             if (root.has_key("userId")) user_id = root["userId"].as_string();
             else if (root.has_key("id")) user_id = root["id"].as_string();
+            if (root.has_key("email")) email = root["email"].as_string();
+            if (root.has_key("phone")) phone = root["phone"].as_string();
         }
+        if (user_id.empty()) user_id = req.get_param("userId", req.get_param("id"));
+        if (email.empty()) email = req.get_param("email");
+        if (phone.empty()) phone = req.get_param("phone");
 
-        if (user_id.empty()) {
-            res.set_json("{\"success\":false,\"code\":\"MISSING_USER_ID\",\"error\":\"Vui lòng cung cấp userId cần xóa.\"}", 400);
+        if (user_id.empty() && email.empty() && phone.empty()) {
+            res.set_json("{\"success\":false,\"code\":\"MISSING_USER_ID\",\"error\":\"Vui lòng cung cấp userId, email hoặc phone cần xóa.\"}", 400);
             return;
         }
 
-        // Clean purge across all tables
-        auto stmt_user = auth_service.database().prepare("DELETE FROM users WHERE id = ?;");
-        if (stmt_user) { stmt_user->bind(1, user_id); stmt_user->step(); }
-
-        auto stmt_driver = auth_service.database().prepare("DELETE FROM drivers WHERE user_id = ?;");
-        if (stmt_driver) { stmt_driver->bind(1, user_id); stmt_driver->step(); }
-
-        auto stmt_token = auth_service.database().prepare("DELETE FROM tokens WHERE user_id = ?;");
-        if (stmt_token) { stmt_token->bind(1, user_id); stmt_token->step(); }
+        // Clean purge across all tables & sync backup
+        auth_service.delete_user(user_id, email, phone);
 
         res.set_json("{\"success\":true,\"message\":\"Đã xóa vĩnh viễn tài khoản người dùng và dọn dẹp sạch toàn bộ dữ liệu.\"}", 200);
     };

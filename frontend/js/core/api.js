@@ -222,6 +222,13 @@ class ApiClient {
     }
 
     /**
+     * Get list of all registered drivers (Admin only)
+     */
+    async getDrivers() {
+        return this.get('/admin/drivers');
+    }
+
+    /**
      * Approve driver (Admin only)
      */
     async approveDriver(driverId) {
@@ -387,6 +394,16 @@ class ApiClient {
      */
     async uploadAvatar(avatarData) {
         return this.post('/auth/avatar', { avatar: avatarData });
+    }
+
+    /**
+     * Delete user completely from SQLite database (Admin)
+     * @param {string} userId
+     * @param {string} [email]
+     * @param {string} [phone]
+     */
+    async deleteUser(userId, email = '', phone = '') {
+        return this.post('/admin/users/delete', { userId, email, phone });
     }
 }
 

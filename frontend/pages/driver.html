@@ -4,16 +4,119 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cổng Đối tác Tài xế | Navigo — Dẫn lối chuẩn xác, đón rước tận nơi</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com">
+    <!-- Early Hash & Tab Resolver: Runs immediately before rendering body to eliminate FOUC / tab flashing -->
+    <script>
+        (function() {
+            try {
+                var h = (window.location.hash || '').replace('#', '').toLowerCase();
+                if (h === 'earnings') {
+                    window.location.replace('wallet.html?role=driver');
+                    return;
+                }
+                var initialTab = (h === 'trips' || h === 'account') ? h : 'home';
+                document.documentElement.setAttribute('data-driver-tab', initialTab);
+            } catch(e) {}
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../css/design-system.css">
     <link rel="stylesheet" href="../css/layout.css">
     <link rel="stylesheet" href="../css/components.css">
-    <link rel="stylesheet" href="../css/gsm-app.css?v=3.1">
+    <link rel="stylesheet" href="../css/gsm-app.css?v=20261106_v5">
     <link rel="stylesheet" href="../css/responsive.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
+        /* Declarative driver tab switching: 0ms initial render without flicker */
+        .driver-tab-pane {
+            display: none !important;
+        }
+        html[data-driver-tab="home"] #driver-tab-home {
+            display: flex !important;
+        }
+        html[data-driver-tab="trips"] #driver-tab-trips {
+            display: block !important;
+        }
+        html[data-driver-tab="account"] #driver-tab-account {
+            display: block !important;
+        }
+
+        /* Top header navigation active states */
+        html[data-driver-tab="home"] .header-nav [data-tab="home"],
+        html[data-driver-tab="trips"] .header-nav [data-tab="trips"],
+        .header-nav .nav-link.active {
+            color: #007d77 !important;
+            background: rgba(0, 177, 169, 0.16) !important;
+            border-bottom: 3px solid #00b1a9 !important;
+            font-weight: 800 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 2px 8px rgba(0, 177, 169, 0.25) !important;
+        }
+
+        html[data-driver-tab="trips"] .header-nav [data-tab="home"],
+        html[data-driver-tab="home"] .header-nav [data-tab="trips"] {
+            color: #475569 !important;
+            background: transparent !important;
+            border-bottom: none !important;
+            font-weight: 500 !important;
+            box-shadow: none !important;
+        }
+
+        /* Authentic Navigo Active Navigation Button (Full Gradient Capsule Matching Image 3) */
+        html[data-driver-tab="home"] #bnav-driver-home,
+        html[data-driver-tab="trips"] #bnav-driver-trips,
+        .gsm-floating-bottom-nav #bnav-driver-home.active,
+        .gsm-floating-bottom-nav #bnav-driver-trips.active {
+            background: linear-gradient(135deg, rgba(167, 243, 208, 0.95) 0%, rgba(56, 211, 159, 0.95) 45%, rgba(0, 177, 169, 0.98) 100%) !important;
+            color: #ffffff !important;
+            min-width: 66px !important;
+            padding: 0 16px !important;
+            box-shadow: 0 6px 18px rgba(0, 177, 169, 0.35), inset 0 1px 2px rgba(255, 255, 255, 0.7) !important;
+            transform: scale(1.02) !important;
+        }
+
+        html[data-driver-tab="home"] #bnav-driver-home .gsm-nav-svg,
+        html[data-driver-tab="trips"] #bnav-driver-trips .gsm-nav-svg,
+        .gsm-floating-bottom-nav #bnav-driver-home.active .gsm-nav-svg,
+        .gsm-floating-bottom-nav #bnav-driver-trips.active .gsm-nav-svg {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+            transform: scale(1.06) !important;
+            filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.12)) !important;
+        }
+
+        html[data-driver-tab="home"] #bnav-driver-home .gsm-nav-svg path,
+        html[data-driver-tab="trips"] #bnav-driver-trips .gsm-nav-svg path,
+        .gsm-floating-bottom-nav #bnav-driver-home.active .gsm-nav-svg path,
+        .gsm-floating-bottom-nav #bnav-driver-trips.active .gsm-nav-svg path {
+            fill: #ffffff !important;
+        }
+
+        /* Inactive states override */
+        html[data-driver-tab="trips"] #bnav-driver-home,
+        html[data-driver-tab="home"] #bnav-driver-trips {
+            background: transparent !important;
+            color: #475569 !important;
+            min-width: 48px !important;
+            padding: 0 14px !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }
+
+        html[data-driver-tab="trips"] #bnav-driver-home .gsm-nav-svg,
+        html[data-driver-tab="home"] #bnav-driver-trips .gsm-nav-svg {
+            color: #475569 !important;
+            fill: #475569 !important;
+            transform: none !important;
+            filter: none !important;
+        }
+
+        html[data-driver-tab="trips"] #bnav-driver-home .gsm-nav-svg path,
+        html[data-driver-tab="home"] #bnav-driver-trips .gsm-nav-svg path {
+            fill: #475569 !important;
+        }
+
         /* Ensure app-header and user-menu have absolute top stacking priority */
         .app-header {
             z-index: 2500 !important;
@@ -553,7 +656,7 @@
         <!-- Header -->
         <header class="app-header">
             <div class="header-logo">
-                <a href="../index.html" style="text-decoration:none; display:flex; align-items:center; gap:var(--space-2);">
+                <a href="driver.html#home" style="text-decoration:none; display:flex; align-items:center; gap:var(--space-2);">
                     <span style="font-size:1.35rem;">🚗</span>
                     <span class="header-brand" style="color:var(--color-primary); font-weight:800;">Navigo</span>
                 </a>
@@ -561,9 +664,8 @@
             </div>
             <!-- Desktop Navigation -->
             <nav class="header-nav desktop-only-flex">
-                <a href="../index.html" class="nav-link">🏠 Trang chủ</a>
-                <a href="#home" class="nav-link active" data-tab="home">🚗 Nhận chuyến</a>
-                <a href="#trips" class="nav-link" data-tab="trips">📋 Lịch sử</a>
+                <a href="#home" class="nav-link" data-tab="home">🏠 Trang chủ</a>
+                <a href="#trips" class="nav-link" data-tab="trips">📋 Lịch sử chuyến</a>
                 <a href="wallet.html?role=driver" class="nav-link">💳 Ví Navi</a>
                 <a href="notifications.html" class="nav-link" style="position:relative;">🔔 Thông báo <span class="gsm-nav-badge-dot" style="position:absolute; top:6px; right:4px; width:7px; height:7px; border-radius:50%; background:#ef4444; border:1px solid #fff; display:none;"></span></a>
                 <a href="profile.html" class="nav-link">👤 Hồ sơ</a>
@@ -578,9 +680,10 @@
                 </button>
                 <div class="user-menu-dropdown" id="user-menu-dropdown" style="display:none;">
                     <div class="user-menu-item" style="font-weight:700; color:#1e293b;" data-user-name>Tài xế đối tác</div>
+                    <a href="driver.html#home" class="user-menu-item" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:6px;">🏠 Trang chủ nhận cuốc</a>
+                    <a href="driver.html#trips" class="user-menu-item" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:6px;">📋 Lịch sử chuyến đi</a>
                     <a href="notifications.html" class="user-menu-item" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:6px;">🔔 Thông báo & Ưu đãi</a>
                     <a href="profile.html" class="user-menu-item" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:6px;">👤 Xem Profile & Trạng thái</a>
-                    <a href="../index.html" class="user-menu-item" style="text-decoration:none; color:inherit;">🏠 Trang chủ Navigo</a>
                     <div class="user-menu-divider" style="height:1px; background:#e2e8f0; margin:4px 0;"></div>
                     <div class="user-menu-item user-menu-item-danger" data-action="logout" style="color:#ef4444; cursor:pointer;">🚪 Đăng xuất</div>
                 </div>
@@ -591,7 +694,7 @@
         <main class="app-main driver-app-main">
             
             <!-- TAB 1: NHẬN CHUYẾN (FULL-SCREEN MAP & FLOATING DISPATCH WIDGETS) -->
-            <div id="driver-tab-home" class="driver-tab-pane" style="display:flex; flex-direction:column; flex:1 1 auto; height:calc(100vh - var(--header-height, 56px)); position:relative; overflow:hidden;">
+            <div id="driver-tab-home" class="driver-tab-pane" style="flex-direction:column; flex:1 1 auto; height:calc(100vh - var(--header-height, 56px)); position:relative; overflow:hidden;">
                 
                 <!-- Full-Screen Map Container -->
                 <div id="driver-map" style="width:100%; height:100%; z-index:1;"></div>
@@ -681,7 +784,7 @@
             </div>
 
             <!-- TAB 2: LỊCH SỬ CHUYẾN ĐI (COMPLETED TRIPS MATCHING USER SCREENSHOT) -->
-            <div id="driver-tab-trips" class="driver-tab-pane" style="display:none; padding:24px 20px; max-width:850px; margin:0 auto; width:100%;">
+            <div id="driver-tab-trips" class="driver-tab-pane" style="padding:24px 20px; max-width:850px; margin:0 auto; width:100%;">
                 <div class="page-header" style="margin-bottom:16px;">
                     <div>
                         <h2 style="margin:0; font-size:1.4rem;">Lịch sử chuyến đi</h2>
@@ -704,7 +807,7 @@
             </div>
 
             <!-- TAB 3: THÔNG TIN TÀI KHOẢN (FOR MOBILE) -->
-            <div id="driver-tab-account" class="driver-tab-pane" style="display:none; padding:24px 20px; max-width:600px; margin:0 auto; width:100%;">
+            <div id="driver-tab-account" class="driver-tab-pane" style="padding:24px 20px; max-width:600px; margin:0 auto; width:100%;">
                 <div class="card" style="padding:24px; border-radius:16px; background:#fff; border:1px solid var(--color-gray-200);">
                     <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
                         <div class="avatar avatar-lg" style="background:#0288d1; color:#fff; font-size:1.5rem; font-weight:700; overflow:hidden; cursor:pointer;" data-user-avatar data-action="profile" title="Bấm để đổi ảnh đại diện">T</div>
@@ -729,9 +832,18 @@
                             <span style="color:#64748b;">Biển số phương tiện</span>
                             <strong id="account-plate" style="color:var(--color-primary);">--</strong>
                         </div>
-                        <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #f1f5f9;">
                             <span style="color:#64748b;">Loại phương tiện</span>
-                            <strong id="account-vehicle">Ô tô 4 chỗ (GoCar)</strong>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <select id="select-driver-vehicle-type" style="border:1.5px solid #00b1a9; background:#f0fdfa; color:#0f766e; font-weight:800; font-size:0.88rem; border-radius:10px; padding:6px 10px; cursor:pointer; outline:none;">
+                                    <option value="car4">🚗 Ô tô 4 chỗ (Navigo Car)</option>
+                                    <option value="motorbike">🛵 Xe máy điện (Navigo Bike)</option>
+                                    <option value="car7">🚐 Ô tô 7 chỗ (Navigo Taxi 7 chỗ)</option>
+                                    <option value="premium">🚘 Xe sang VIP (Navigo Luxury)</option>
+                                    <option value="delivery">📦 Giao hàng (Navigo Delivery)</option>
+                                </select>
+                                <strong id="account-vehicle" style="display:none;">Ô tô 4 chỗ (GoCar)</strong>
+                            </div>
                         </div>
                     </div>
 
@@ -746,14 +858,9 @@
         <!-- Unified Floating Bottom Navigation Bar (Authentic Navigo Mobile Experience) -->
         <nav class="gsm-floating-bottom-nav" id="gsm-floating-bottom-nav" data-rendered-role="driver">
             <div class="gsm-bottom-nav-pill">
-                <a href="../index.html" class="gsm-nav-btn" id="bnav-driver-landing" title="Về trang chủ">
+                <a href="#home" class="gsm-nav-btn" data-tab="home" id="bnav-driver-home" title="Trang chủ">
                     <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 3L2 12h3v8a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-5h2v5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-8h3L12 3z"/>
-                    </svg>
-                </a>
-                <a href="#home" class="gsm-nav-btn active" data-tab="home" id="bnav-driver-home" title="Nhận chuyến">
-                    <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/>
                     </svg>
                 </a>
                 <a href="#trips" class="gsm-nav-btn" data-tab="trips" id="bnav-driver-trips" title="Lịch sử chuyến đi">
@@ -761,7 +868,7 @@
                         <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
                     </svg>
                 </a>
-                <a href="wallet.html?role=driver" class="gsm-nav-btn" id="bnav-driver-wallet" title="Ví điện tử Navi">
+                <a href="wallet.html?role=driver" class="gsm-nav-btn" id="bnav-driver-wallet" title="Ví Navi">
                     <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M21 18v1a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v1h-9a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h9zm-9-2h10V8H12v8zm4-2.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/>
                     </svg>
@@ -807,7 +914,8 @@
     <script src="../js/core/firebase-config.js"></script>
     <script src="../js/core/realtime.js"></script>
     <script src="../js/core/api.js"></script>
-    <script src="../js/core/session.js"></script>
+    <script src="../js/core/session.js?v=20261106_v5"></script>
+    <script src="../js/core/wallet.js"></script>
     <script src="../js/core/notifications.js"></script>
     <script src="../js/core/router.js"></script>
     <script src="../js/core/demo-data.js"></script>

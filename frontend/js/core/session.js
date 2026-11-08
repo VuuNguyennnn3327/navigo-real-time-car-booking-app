@@ -58,7 +58,7 @@ window.showNavigoModal = function(options) {
                              document.querySelector('.loading-splash-overlay') || 
                              document.querySelector('.navigo-welcome-splash');
     const isLoadingActive = sessionStorage.getItem('navigo_loading_screen_active') === 'true';
-    if (!isLoadingElement && !isLoadingActive) {
+    if (!isLoadingElement) {
         try { sessionStorage.removeItem('navigo_loading_screen_active'); } catch(e) {}
     } else if (isLoadingActive) {
         // Strictly suppress location prompts or automatic prompts during loading screen
@@ -113,11 +113,21 @@ window.showNavigoModal = function(options) {
 
     document.body.appendChild(overlay);
 
+    const handleKeydown = (e) => {
+        if (e.key === 'Escape') {
+            document.removeEventListener('keydown', handleKeydown);
+            overlay.remove();
+            if (typeof onCancel === 'function') onCancel();
+        }
+    };
+    document.addEventListener('keydown', handleKeydown);
+
     const closeBtn = overlay.querySelector('#btn-liquid-close');
     if (closeBtn) {
         closeBtn.onmouseenter = () => { closeBtn.style.background = '#fee2e2'; closeBtn.style.color = '#dc2626'; };
         closeBtn.onmouseleave = () => { closeBtn.style.background = 'rgba(0,0,0,0.06)'; closeBtn.style.color = '#64748b'; };
         closeBtn.onclick = () => {
+            document.removeEventListener('keydown', handleKeydown);
             overlay.remove();
             if (typeof onCancel === 'function') onCancel();
         };
@@ -126,6 +136,7 @@ window.showNavigoModal = function(options) {
     const cancelBtn = overlay.querySelector('#btn-liquid-cancel');
     if (cancelBtn) {
         cancelBtn.onclick = () => {
+            document.removeEventListener('keydown', handleKeydown);
             overlay.remove();
             if (typeof onCancel === 'function') onCancel();
         };
@@ -134,6 +145,7 @@ window.showNavigoModal = function(options) {
     const confirmBtn = overlay.querySelector('#btn-liquid-confirm');
     if (confirmBtn) {
         confirmBtn.onclick = () => {
+            document.removeEventListener('keydown', handleKeydown);
             overlay.remove();
             if (typeof onConfirm === 'function') onConfirm();
         };
@@ -141,10 +153,40 @@ window.showNavigoModal = function(options) {
 
     overlay.onclick = (e) => {
         if (e.target === overlay) {
+            document.removeEventListener('keydown', handleKeydown);
             overlay.remove();
             if (typeof onCancel === 'function') onCancel();
         }
     };
+};
+
+/**
+ * Global In-Development Feature Modal Helper
+ * Opens a modal notification informing that the feature is currently in development.
+ */
+window.showFeatureInDevelopment = function(featureName, icon) {
+    const defaultIcons = {
+        'Đồ ăn': '🍔',
+        'Hội viên': '💎',
+        'Thuê xe tự lái': '🚗',
+        'Thẻ quà tặng': '🎁',
+        'VinBus': '🚌'
+    };
+    const title = featureName || 'Tính năng';
+    const resolvedIcon = icon || defaultIcons[featureName] || '⚡';
+
+    if (typeof window.showNavigoModal === 'function') {
+        window.showNavigoModal({
+            title: title,
+            message: 'Tính năng đang phát triển',
+            icon: resolvedIcon,
+            confirmText: 'Đã hiểu',
+            showCancel: false,
+            onConfirm: () => {}
+        });
+    } else {
+        alert(title + '\nTính năng đang phát triển');
+    }
 };
 
 /**
@@ -654,6 +696,66 @@ if (typeof document !== 'undefined') {
                 }
             }
         }
+
+        // Guest Account Dropdown Trigger & Outside Click Delegation
+        const guestTrigger = e.target.closest('[data-guest-menu-trigger], #guest-account-trigger, .gsm-guest-account-btn');
+        if (guestTrigger) {
+            e.preventDefault();
+            e.stopPropagation();
+            const wrapper = guestTrigger.closest('.gsm-guest-menu-wrapper, [data-auth="guest"]') || document;
+            const dropdown = wrapper.querySelector('.gsm-guest-dropdown, [data-guest-dropdown]') || document.querySelector('#guest-account-dropdown');
+            if (dropdown) {
+                const isOpen = dropdown.classList.contains('show') || dropdown.style.display === 'block';
+                // Close all other dropdowns
+                document.querySelectorAll('.gsm-guest-dropdown, [data-guest-dropdown]').forEach(d => {
+                    d.classList.remove('show');
+                    d.style.setProperty('display', 'none', 'important');
+                    d.style.setProperty('visibility', 'hidden', 'important');
+                    d.style.setProperty('opacity', '0', 'important');
+                });
+                document.querySelectorAll('.gsm-guest-account-btn').forEach(b => b.classList.remove('open'));
+                if (!isOpen) {
+                    if (wrapper && wrapper !== document) {
+                        wrapper.style.setProperty('position', 'relative', 'important');
+                        wrapper.style.setProperty('overflow', 'visible', 'important');
+                        wrapper.style.setProperty('z-index', '2147483647', 'important');
+                    }
+                    const nav = guestTrigger.closest('.gsm-pc-navbar');
+                    if (nav) {
+                        nav.style.setProperty('overflow', 'visible', 'important');
+                        nav.style.setProperty('z-index', '2147483646', 'important');
+                    }
+                    dropdown.classList.add('show');
+                    dropdown.style.setProperty('display', 'block', 'important');
+                    dropdown.style.setProperty('visibility', 'visible', 'important');
+                    dropdown.style.setProperty('opacity', '1', 'important');
+                    dropdown.style.setProperty('z-index', '2147483647', 'important');
+                    guestTrigger.classList.add('open');
+                }
+            }
+            return;
+        }
+
+        // Close dropdown when clicking outside
+        if (!e.target.closest('.gsm-guest-dropdown, [data-guest-dropdown], .gsm-guest-account-btn, #guest-account-trigger')) {
+            document.querySelectorAll('.gsm-guest-dropdown, [data-guest-dropdown]').forEach(d => {
+                d.classList.remove('show');
+                d.style.setProperty('display', 'none', 'important');
+                d.style.setProperty('visibility', 'hidden', 'important');
+                d.style.setProperty('opacity', '0', 'important');
+            });
+            document.querySelectorAll('.gsm-guest-account-btn').forEach(b => b.classList.remove('open'));
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.gsm-guest-dropdown, [data-guest-dropdown]').forEach(d => {
+                d.classList.remove('show');
+                d.style.display = 'none';
+            });
+            document.querySelectorAll('.gsm-guest-account-btn').forEach(b => b.classList.remove('open'));
+        }
     });
 
     function syncNavigoAuthUI() {
@@ -677,11 +779,18 @@ if (typeof document !== 'undefined') {
 
         // 2. Auth state elements
         document.querySelectorAll('[data-auth="guest"]').forEach(el => {
-            el.style.setProperty('display', isGuest ? 'flex' : 'none', 'important');
+            el.style.setProperty('display', isGuest ? (el.classList.contains('gsm-guest-menu-wrapper') ? 'inline-flex' : 'flex') : 'none', 'important');
         });
         document.querySelectorAll('[data-auth="user"]').forEach(el => {
             el.style.setProperty('display', isGuest ? 'none' : 'flex', 'important');
         });
+
+        if (!isGuest) {
+            document.querySelectorAll('.gsm-guest-dropdown, [data-guest-dropdown]').forEach(d => {
+                d.classList.remove('show');
+                d.style.display = 'none';
+            });
+        }
 
         if (isGuest) {
             document.querySelectorAll('[data-action="logout"], #btn-desktop-logout, #btn-logout-account, .gsm-btn-logout-row, #btn-profile-logout, #btn-customer-logout, .admin-sidebar-btn-logout').forEach(el => {
@@ -772,25 +881,41 @@ if (typeof document !== 'undefined') {
         const isRegisterPage = activePage === 'register';
         const isHome = activePage === 'home';
 
-        // If logged-in user is a driver, prevent customer booking page access and redirect directly to driver portal
-        if (isCustomerPage && isDriver) {
-            window.location.replace(driverUrl);
-            return;
+        // Strict Role Routing & Boundary Protection
+        if (isDriver) {
+            // Driver cannot access customer booking page or general customer home page
+            if (isCustomerPage || isHome) {
+                window.location.replace(driverUrl);
+                return;
+            }
         }
+        if (isAdmin) {
+            // Admin cannot access customer booking page or general customer home page
+            if (isCustomerPage || isHome) {
+                window.location.replace(adminUrl);
+                return;
+            }
+        }
+
+        // Update brand logo links dynamically based on role
+        document.querySelectorAll('.header-logo a, .gsm-nav-logo, a[data-brand-logo]').forEach(logoA => {
+            if (isDriver) {
+                logoA.setAttribute('href', isDriverPage ? '#home' : driverUrl + '#home');
+            } else if (isAdmin) {
+                logoA.setAttribute('href', adminUrl);
+            }
+        });
 
         document.querySelectorAll('.gsm-pc-nav-links').forEach(container => {
             if (isDriver) {
-                // Driver Desktop Navigation: Trang chủ, Nhận chuyến, Lịch sử, Thu nhập, Ví Navi, Thông báo, Hồ sơ (Both Thu nhập & Ví Navi!)
+                // Driver Desktop Navigation: Trang chủ, Lịch sử, Ví Navi, Thông báo, Hồ sơ
                 const isTabHome = isDriverPage && (!curHash || curHash === '#home');
                 const isTabTrips = isDriverPage && curHash === '#trips';
 
-
                 container.innerHTML = `
-                    <a href="${homeUrl}" class="gsm-pc-nav-link ${isHome ? 'active' : ''}">Trang chủ</a>
-                    <a href="${isDriverPage ? '#home' : driverUrl + '#home'}" class="gsm-pc-nav-link ${isTabHome ? 'active' : ''}" data-nav="driver-home" data-tab="home">🚗 Nhận chuyến</a>
+                    <a href="${isDriverPage ? '#home' : driverUrl + '#home'}" class="gsm-pc-nav-link ${isTabHome ? 'active' : ''}" data-nav="driver-home" data-tab="home">🏠 Trang chủ</a>
                     <a href="${isDriverPage ? '#trips' : driverUrl + '#trips'}" class="gsm-pc-nav-link ${isTabTrips ? 'active' : ''}" data-nav="driver-trips" data-tab="trips">📋 Lịch sử</a>
-
-                    <a href="${walletUrl}" class="gsm-pc-nav-link ${isWalletPage ? 'active' : ''}" data-nav="driver-wallet">💳 Ví Navi</a>
+                    <a href="${walletUrl}?role=driver" class="gsm-pc-nav-link ${isWalletPage ? 'active' : ''}" data-nav="driver-wallet">💳 Ví Navi</a>
                     <a href="${notificationsUrl}" class="gsm-pc-nav-link ${isNotificationsPage ? 'active' : ''}" data-nav="driver-notifications" style="position:relative;">
                         🔔 Thông báo
                         <span class="gsm-nav-badge-dot" style="position:absolute; top:7px; right:5px; width:7px; height:7px; border-radius:50%; background:#ef4444; border:1px solid #fff; display:none;"></span>
@@ -819,14 +944,13 @@ if (typeof document !== 'undefined') {
                 }
             } else if (isAdmin) {
                 container.innerHTML = `
-                    <a href="${homeUrl}" class="gsm-pc-nav-link ${isHome ? 'active' : ''}">Trang chủ</a>
-                    <a href="${adminUrl}" class="gsm-pc-nav-link ${isAdminPage ? 'active' : ''}" data-role="admin">🛡️ Quản trị</a>
-                    <a href="${activityUrl}" class="gsm-pc-nav-link ${isActivityPage ? 'active' : ''}">📋 Hoạt động</a>
+                    <a href="${adminUrl}" class="gsm-pc-nav-link ${isAdminPage ? 'active' : ''}" data-role="admin">🛡️ Trung tâm Quản trị</a>
+                    <a href="${activityUrl}" class="gsm-pc-nav-link ${isActivityPage ? 'active' : ''}">📋 Giám sát Hoạt động</a>
                     <a href="${notificationsUrl}" class="gsm-pc-nav-link ${isNotificationsPage ? 'active' : ''}" style="position:relative;">
                         🔔 Thông báo
                         <span class="gsm-nav-badge-dot" style="position:absolute; top:7px; right:5px; width:7px; height:7px; border-radius:50%; background:#ef4444; border:1px solid #fff; display:none;"></span>
                     </a>
-                    <a href="${profileUrl}" class="gsm-pc-nav-link ${isProfilePage ? 'active' : ''}">👤 Hồ sơ</a>
+                    <a href="${profileUrl}" class="gsm-pc-nav-link ${isProfilePage ? 'active' : ''}">👤 Hồ sơ Quản trị</a>
                 `;
             } else if (isCustomer) {
                 // Customer: Trang chủ, Đặt xe Navigo, Ví Navi, Hoạt động, Thông báo, Hồ sơ
@@ -857,31 +981,46 @@ if (typeof document !== 'undefined') {
             }
 
             // Strictly enforce mutually exclusive active class on desktop top nav links
-            container.querySelectorAll('.gsm-pc-nav-link').forEach(link => {
-                const href = (link.getAttribute('href') || '').toLowerCase();
-                const txt = (link.textContent || '').toLowerCase().trim();
+            if (isDriver) {
+                const isTabHome = isDriverPage && (!curHash || curHash === '#home');
+                const isTabTrips = isDriverPage && curHash === '#trips';
+                container.querySelectorAll('.gsm-pc-nav-link').forEach(link => {
+                    const dNav = link.getAttribute('data-nav');
+                    let active = false;
+                    if (dNav === 'driver-home') active = isTabHome;
+                    else if (dNav === 'driver-trips') active = isTabTrips;
+                    else if (dNav === 'driver-wallet') active = isWalletPage;
+                    else if (dNav === 'driver-notifications') active = isNotificationsPage;
+                    else if (dNav === 'driver-profile') active = isProfilePage;
+                    link.classList.toggle('active', active);
+                });
+            } else {
+                container.querySelectorAll('.gsm-pc-nav-link').forEach(link => {
+                    const href = (link.getAttribute('href') || '').toLowerCase();
+                    const txt = (link.textContent || '').toLowerCase().trim();
 
-                let active = false;
-                if (href.endsWith('index.html') || href === 'index.html' || href === '../index.html' || href === '/' || txt === 'trang chủ') {
-                    active = isHome;
-                } else if (href.includes('customer') || txt.includes('đặt xe')) {
-                    active = isCustomerPage;
-                } else if (href.includes('wallet') || txt.includes('ví navi')) {
-                    active = isWalletPage;
-                } else if (href.includes('activity') || txt.includes('hoạt động')) {
-                    active = isActivityPage;
-                } else if (href.includes('notifications') || txt.includes('thông báo')) {
-                    active = isNotificationsPage;
-                } else if (href.includes('profile') || txt.includes('hồ sơ')) {
-                    active = isProfilePage;
-                } else if (href.includes('admin') || txt.includes('quản trị')) {
-                    active = isAdminPage;
-                } else if (href.includes('driver') || txt.includes('tài xế')) {
-                    active = isDriverPage;
-                }
+                    let active = false;
+                    if (href.endsWith('index.html') || href === 'index.html' || href === '../index.html' || href === '/' || txt === 'trang chủ') {
+                        active = isHome;
+                    } else if (href.includes('customer') || txt.includes('đặt xe')) {
+                        active = isCustomerPage;
+                    } else if (href.includes('wallet') || txt.includes('ví navi')) {
+                        active = isWalletPage;
+                    } else if (href.includes('activity') || txt.includes('hoạt động')) {
+                        active = isActivityPage;
+                    } else if (href.includes('notifications') || txt.includes('thông báo')) {
+                        active = isNotificationsPage;
+                    } else if (href.includes('profile') || txt.includes('hồ sơ')) {
+                        active = isProfilePage;
+                    } else if (href.includes('admin') || txt.includes('quản trị')) {
+                        active = isAdminPage;
+                    } else if (href.includes('driver') || txt.includes('tài xế')) {
+                        active = isDriverPage;
+                    }
 
-                link.classList.toggle('active', active);
-            });
+                    link.classList.toggle('active', active);
+                });
+            }
 
             // Wire in-page tab switching on desktop top nav links
             container.querySelectorAll('.gsm-pc-nav-link').forEach(link => {
@@ -977,51 +1116,77 @@ if (typeof document !== 'undefined') {
 
                         let active = false;
 
-                        // 1. Home button (Trang chủ)
-                        if (id === 'bnav-cust-home' || id === 'bnav-guest-home' || id === 'bnav-admin-landing' || id === 'bnav-driver-landing' || 
-                            href.endsWith('index.html') || href === 'index.html' || href === '../index.html' || href === '/' || 
-                            title === 'trang chủ' || title === 'về trang chủ') {
-                            active = isHome;
-                        }
-                        // 2. Admin dashboard button (Quản trị)
-                        else if (id === 'bnav-admin-dashboard' || id === 'bnav-admin' || 
-                                 href.endsWith('admin.html') || href === 'admin.html' || href === 'pages/admin.html' || 
-                                 title.includes('quản trị')) {
-                            active = isAdminPage;
-                        }
-                        // 3. Driver Trips tab (Lịch sử chuyến đi)
-                        else if (dataTab === 'trips' || id === 'bnav-driver-trips' || href.includes('#trips') || title.includes('lịch sử chuyến')) {
-                            active = isTabTrips;
-                        }
-                        // 4. Driver Home (Nhận chuyến) tab
-                        else if (dataTab === 'home' || id === 'bnav-driver-home' || href.includes('#home') || title.includes('nhận chuyến')) {
-                            active = isTabHome;
-                        }
-                        // 5. Customer Booking button (Đặt xe Navigo)
-                        else if (id === 'bnav-cust-booking' || id === 'bnav-guest-booking' || 
-                                 href.endsWith('customer.html') || href === 'customer.html' || href === 'pages/customer.html' || 
-                                 title === 'đặt xe' || title === 'đặt xe navigo') {
-                            active = isCustomerPage;
-                        }
-                        // 6. Wallet button (Ví Navi)
-                        else if (id === 'bnav-cust-wallet' || id === 'bnav-guest-wallet' || id === 'bnav-driver-wallet' || 
-                                 href.includes('wallet') || title.includes('ví')) {
-                            active = isWalletPage;
-                        }
-                        // 7. Activity / History button (Hoạt động / Lịch sử)
-                        else if (id === 'bnav-cust-activity' || id === 'bnav-cust-history' || id === 'bnav-guest-activity' || id === 'bnav-admin-activity' || 
-                                 href.includes('activity') || title.includes('hoạt động') || title === 'lịch sử') {
-                            active = isActivityPage;
-                        }
-                        // 8. Notifications button (Thông báo)
-                        else if (id === 'bnav-cust-notifications' || id === 'bnav-guest-notifications' || id === 'bnav-admin-notifications' || id === 'bnav-driver-notifications' || 
-                                 href.includes('notification') || title.includes('thông báo')) {
-                            active = isNotificationsPage;
-                        }
-                        // 9. Profile / Account button (Hồ sơ)
-                        else if (id === 'bnav-cust-account' || id === 'bnav-guest-account' || id === 'bnav-admin-account' || id === 'bnav-driver-account' || 
-                                 href.includes('profile') || title.includes('hồ sơ') || title.includes('tài khoản')) {
-                            active = isProfilePage;
+                        if (isDriver) {
+                            if (id === 'bnav-driver-home' || dataTab === 'home' || title === 'trang chủ') {
+                                active = isTabHome;
+                            } else if (id === 'bnav-driver-trips' || dataTab === 'trips' || title.includes('lịch sử')) {
+                                active = isTabTrips;
+                            } else if (id === 'bnav-driver-wallet' || href.includes('wallet') || title.includes('ví')) {
+                                active = isWalletPage;
+                            } else if (id === 'bnav-driver-notifications' || href.includes('notification') || title.includes('thông báo')) {
+                                active = isNotificationsPage;
+                            } else if (id === 'bnav-driver-account' || href.includes('profile') || title.includes('hồ sơ') || title.includes('tài khoản')) {
+                                active = isProfilePage;
+                            }
+                        } else if (isAdmin) {
+                            if (id === 'bnav-admin-dashboard' || id === 'bnav-admin' || 
+                                href.endsWith('admin.html') || href === 'admin.html' || href === 'pages/admin.html' || 
+                                title.includes('quản trị') || title === 'trang chủ' || title === 'trang chủ quản trị') {
+                                active = isAdminPage;
+                            } else if (id === 'bnav-admin-activity' || href.includes('activity') || title.includes('hoạt động')) {
+                                active = isActivityPage;
+                            } else if (id === 'bnav-admin-notifications' || href.includes('notification') || title.includes('thông báo')) {
+                                active = isNotificationsPage;
+                            } else if (id === 'bnav-admin-account' || href.includes('profile') || title.includes('hồ sơ') || title.includes('tài khoản')) {
+                                active = isProfilePage;
+                            }
+                        } else {
+                            // 1. Home button (Trang chủ)
+                            if (id === 'bnav-cust-home' || id === 'bnav-guest-home' || id === 'bnav-admin-landing' || id === 'bnav-driver-landing' || 
+                                href.endsWith('index.html') || href === 'index.html' || href === '../index.html' || href === '/' || 
+                                title === 'trang chủ' || title === 'về trang chủ') {
+                                active = isHome;
+                            }
+                            // 2. Admin dashboard button (Quản trị)
+                            else if (id === 'bnav-admin-dashboard' || id === 'bnav-admin' || 
+                                     href.endsWith('admin.html') || href === 'admin.html' || href === 'pages/admin.html' || 
+                                     title.includes('quản trị')) {
+                                active = isAdminPage;
+                            }
+                            // 3. Driver Trips tab (Lịch sử chuyến đi)
+                            else if (dataTab === 'trips' || id === 'bnav-driver-trips' || href.includes('#trips') || title.includes('lịch sử chuyến')) {
+                                active = isTabTrips;
+                            }
+                            // 4. Driver Home tab
+                            else if (dataTab === 'home' || id === 'bnav-driver-home' || href.includes('#home') || title.includes('nhận chuyến')) {
+                                active = isTabHome;
+                            }
+                            // 5. Customer Booking button (Đặt xe Navigo)
+                            else if (id === 'bnav-cust-booking' || id === 'bnav-guest-booking' || 
+                                     href.endsWith('customer.html') || href === 'customer.html' || href === 'pages/customer.html' || 
+                                     title === 'đặt xe' || title === 'đặt xe navigo') {
+                                active = isCustomerPage;
+                            }
+                            // 6. Wallet button (Ví Navi)
+                            else if (id === 'bnav-cust-wallet' || id === 'bnav-guest-wallet' || id === 'bnav-driver-wallet' || 
+                                     href.includes('wallet') || title.includes('ví')) {
+                                active = isWalletPage;
+                            }
+                            // 7. Activity / History button (Hoạt động / Lịch sử)
+                            else if (id === 'bnav-cust-activity' || id === 'bnav-cust-history' || id === 'bnav-guest-activity' || id === 'bnav-admin-activity' || 
+                                     href.includes('activity') || title.includes('hoạt động') || title === 'lịch sử') {
+                                active = isActivityPage;
+                            }
+                            // 8. Notifications button (Thông báo)
+                            else if (id === 'bnav-cust-notifications' || id === 'bnav-guest-notifications' || id === 'bnav-admin-notifications' || id === 'bnav-driver-notifications' || 
+                                     href.includes('notification') || title.includes('thông báo')) {
+                                active = isNotificationsPage;
+                            }
+                            // 9. Profile / Account button (Hồ sơ)
+                            else if (id === 'bnav-cust-account' || id === 'bnav-guest-account' || id === 'bnav-admin-account' || id === 'bnav-driver-account' || 
+                                     href.includes('profile') || title.includes('hồ sơ') || title.includes('tài khoản')) {
+                                active = isProfilePage;
+                            }
                         }
 
                         btn.classList.toggle('active', active);
@@ -1037,21 +1202,16 @@ if (typeof document !== 'undefined') {
                 nav.setAttribute('data-rendered-role', targetRole);
 
                 if (isDriver) {
-                    // DRIVER ROLE: Trang chủ, Nhận chuyến, Lịch sử, Thu nhập, Ví Navi, Thông báo, Hồ sơ (Both Thu nhập AND Ví Navi side-by-side)
+                    // DRIVER ROLE: Trang chủ, Lịch sử, Ví Navi, Thông báo, Hồ sơ (All Driver Destinations)
                     const isTabHome = isDriverPage && (!curHash || curHash === '#home');
                     const isTabTrips = isDriverPage && curHash === '#trips';
     
 
                     nav.innerHTML = `
                         <div class="gsm-bottom-nav-pill">
-                            <a href="${homeUrl}" class="gsm-nav-btn ${isHome ? 'active' : ''}" id="bnav-driver-landing" title="Trang chủ">
+                            <a href="${isDriverPage ? '#home' : driverUrl + '#home'}" class="gsm-nav-btn ${isTabHome ? 'active' : ''}" data-tab="home" id="bnav-driver-home" title="Trang chủ">
                                 <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M12 3L2 12h3v8a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-5h2v5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-8h3L12 3z"/>
-                                </svg>
-                            </a>
-                            <a href="${isDriverPage ? '#home' : driverUrl + '#home'}" class="gsm-nav-btn ${isTabHome ? 'active' : ''}" data-tab="home" id="bnav-driver-home" title="Nhận chuyến">
-                                <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/>
                                 </svg>
                             </a>
                             <a href="${isDriverPage ? '#trips' : driverUrl + '#trips'}" class="gsm-nav-btn ${isTabTrips ? 'active' : ''}" data-tab="trips" id="bnav-driver-trips" title="Lịch sử chuyến đi">
@@ -1059,9 +1219,9 @@ if (typeof document !== 'undefined') {
                                     <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
                                 </svg>
                             </a>
-                            <a href="${walletUrl}" class="gsm-nav-btn ${isWalletPage ? 'active' : ''}" id="bnav-driver-wallet" title="Ví Navi">
+                            <a href="${walletUrl}?role=driver" class="gsm-nav-btn ${isWalletPage ? 'active' : ''}" id="bnav-driver-wallet" title="Ví Navi">
                                 <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8zm4-2.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+                                    <path d="M21 18v1a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v1h-9a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h9zm-9-2h10V8H12v8zm4-2.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/>
                                 </svg>
                             </a>
                             <a href="${notificationsUrl}" class="gsm-nav-btn ${isNotificationsPage ? 'active' : ''}" id="bnav-driver-notifications" title="Thông báo">
@@ -1098,17 +1258,12 @@ if (typeof document !== 'undefined') {
                         });
                     }
                 } else if (isAdmin) {
-                    // ADMIN ROLE: 5 pure icons (Home, Admin, Activity, Notifications, Profile)
+                    // ADMIN ROLE: 4 pure management icons (Admin Dashboard / Home, Activity, Notifications, Profile)
                     nav.innerHTML = `
                         <div class="gsm-bottom-nav-pill">
-                            <a href="${homeUrl}" class="gsm-nav-btn ${isHome ? 'active' : ''}" id="bnav-admin-landing" title="Trang chủ">
+                            <a href="${adminUrl}" class="gsm-nav-btn ${isAdminPage ? 'active' : ''}" id="bnav-admin-dashboard" title="Trang chủ Quản trị">
                                 <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M12 3L2 12h3v8a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-5h2v5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-8h3L12 3z"/>
-                                </svg>
-                            </a>
-                            <a href="${adminUrl}" class="gsm-nav-btn ${isAdminPage ? 'active' : ''}" id="bnav-admin-dashboard" title="Quản trị hệ thống">
-                                <svg class="gsm-nav-svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
                                 </svg>
                             </a>
                             <a href="${activityUrl}" class="gsm-nav-btn ${isActivityPage ? 'active' : ''}" id="bnav-admin-activity" title="Hoạt động chuyến đi">
@@ -1261,19 +1416,15 @@ if (typeof document !== 'undefined') {
                 const isTabTrips = isDriverPage && curHash === '#trips';
 
                 bnav.innerHTML = `
-                    <a href="${homeUrl}" class="bottom-nav-item ${isHome ? 'active' : ''}" id="bnav-driver-landing" title="Về trang chủ">
+                    <a href="${isDriverPage ? '#home' : driverUrl + '#home'}" class="bottom-nav-item ${isTabHome ? 'active' : ''}" data-tab="home" id="bnav-driver-home">
                         <span class="bottom-nav-icon">🏠</span>
                         <span class="bottom-nav-label">Trang chủ</span>
-                    </a>
-                    <a href="${isDriverPage ? '#home' : driverUrl + '#home'}" class="bottom-nav-item ${isTabHome ? 'active' : ''}" data-tab="home" id="bnav-driver-home">
-                        <span class="bottom-nav-icon">🚗</span>
-                        <span class="bottom-nav-label">Nhận chuyến</span>
                     </a>
                     <a href="${isDriverPage ? '#trips' : driverUrl + '#trips'}" class="bottom-nav-item ${isTabTrips ? 'active' : ''}" data-tab="trips" id="bnav-driver-trips">
                         <span class="bottom-nav-icon">📋</span>
                         <span class="bottom-nav-label">Lịch sử</span>
                     </a>
-                    <a href="${walletUrl}" class="bottom-nav-item ${isWalletPage ? 'active' : ''}" id="bnav-driver-wallet" title="Ví Navi">
+                    <a href="${walletUrl}?role=driver" class="bottom-nav-item ${isWalletPage ? 'active' : ''}" id="bnav-driver-wallet" title="Ví Navi">
                         <span class="bottom-nav-icon">💳</span>
                         <span class="bottom-nav-label">Ví</span>
                     </a>
@@ -1288,15 +1439,11 @@ if (typeof document !== 'undefined') {
                 `;
             } else if (isAdmin) {
                 bnav.innerHTML = `
-                    <a href="${homeUrl}" class="bottom-nav-item ${isHome ? 'active' : ''}" id="bnav-admin-landing" title="Về trang chủ">
+                    <a href="${adminUrl}" class="bottom-nav-item ${isAdminPage ? 'active' : ''}" id="bnav-admin-dashboard" title="Trang chủ Quản trị">
                         <span class="bottom-nav-icon">🏠</span>
                         <span class="bottom-nav-label">Trang chủ</span>
                     </a>
-                    <a href="${adminUrl}" class="bottom-nav-item ${isAdminPage ? 'active' : ''}" id="bnav-admin-dashboard">
-                        <span class="bottom-nav-icon">🛡️</span>
-                        <span class="bottom-nav-label">Quản trị</span>
-                    </a>
-                    <a href="${activityUrl}" class="bottom-nav-item ${isActivityPage ? 'active' : ''}">
+                    <a href="${activityUrl}" class="bottom-nav-item ${isActivityPage ? 'active' : ''}" id="bnav-admin-activity">
                         <span class="bottom-nav-icon">📋</span>
                         <span class="bottom-nav-label">Hoạt động</span>
                     </a>

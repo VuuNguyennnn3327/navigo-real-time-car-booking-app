@@ -364,6 +364,10 @@ bool TripService::offer_trip(const std::string& trip_id, const std::string& driv
         return false;
     }
 
+    // Automatically check and expire any previous expired offer on this trip
+    std::string exp_err;
+    check_and_expire_offer(trip_id, exp_err);
+
     int64_t now = current_epoch_seconds();
     int64_t expires = now + offer_duration_seconds;
 
@@ -649,6 +653,20 @@ bool TripService::complete_trip(const std::string& trip_id, const std::string& d
     int64_t now = current_epoch_seconds();
     db::Transaction txn(db_);
 
+    // Fetch fare, payment method and customer ID for accounting
+    int fare_amount = 0;
+    std::string pay_method = "cash";
+    std::string customer_id;
+    auto t_stmt = db_.prepare("SELECT fare_amount, payment_method, customer_id FROM trips WHERE id = ? LIMIT 1;");
+    if (t_stmt) {
+        t_stmt->bind(1, trip_id);
+        if (t_stmt->step()) {
+            fare_amount = t_stmt->column_int(0);
+            pay_method = t_stmt->column_text(1);
+            customer_id = t_stmt->column_text(2);
+        }
+    }
+
     // ONLY transition from IN_PROGRESS -> COMPLETED! (Never before start)
     auto stmt = db_.prepare(
         "UPDATE trips "
@@ -676,6 +694,32 @@ bool TripService::complete_trip(const std::string& trip_id, const std::string& d
     if (drv_stmt) {
         drv_stmt->bind(1, driver_id);
         drv_stmt->step();
+    }
+
+    // Credit driver's wallet balance in users table with fare earnings
+    if (fare_amount > 0) {
+        auto credit_stmt = db_.prepare(
+            "UPDATE users SET wallet_balance = wallet_balance + ?, updated_at = ? WHERE id = ?;"
+        );
+        if (credit_stmt) {
+            credit_stmt->bind(1, static_cast<double>(fare_amount));
+            credit_stmt->bind(2, now);
+            credit_stmt->bind(3, driver_id);
+            credit_stmt->step();
+        }
+
+        // If paid via wallet, deduct from customer's wallet balance
+        if (pay_method == "wallet" && !customer_id.empty()) {
+            auto deduct_stmt = db_.prepare(
+                "UPDATE users SET wallet_balance = MAX(0.0, wallet_balance - ?), updated_at = ? WHERE id = ?;"
+            );
+            if (deduct_stmt) {
+                deduct_stmt->bind(1, static_cast<double>(fare_amount));
+                deduct_stmt->bind(2, now);
+                deduct_stmt->bind(3, customer_id);
+                deduct_stmt->step();
+            }
+        }
     }
 
     if (!txn.commit()) {

@@ -1141,12 +1141,28 @@ class RealtimeSyncManager {
 
     /**
      * 15. Xóa vĩnh viễn và triệt để người dùng khỏi Database đám mây & LocalStorage
-     * Không còn lưu bất cứ dữ liệu rác nào trong hệ thống
+     * Không còn lưu bất cứ dữ liệu rác nào trong hệ thống (Hỗ trợ quét sạch theo ID, Email và SĐT)
      * @param {string} userId 
      * @param {string} [userEmail] 
+     * @param {string} [userPhone]
      */
-    async deleteUser(userId, userEmail) {
-        if (!userId && !userEmail) return false;
+    async deleteUser(userId, userEmail, userPhone) {
+        if (!userId && !userEmail && !userPhone) return false;
+
+        const normEmail = (userEmail || '').toLowerCase().trim();
+        const rawPhone = (userPhone || '').trim();
+        const cleanPhone = rawPhone.replace(/\D/g, '');
+
+        const isMatch = (item) => {
+            if (!item || typeof item !== 'object') return false;
+            if (userId && (item.id === userId || item.userId === userId)) return true;
+            if (normEmail && item.email && item.email.toLowerCase().trim() === normEmail) return true;
+            if (cleanPhone) {
+                const itemPhone = (item.phone || '').toString().replace(/\D/g, '');
+                if (itemPhone && (itemPhone === cleanPhone || itemPhone.endsWith(cleanPhone) || cleanPhone.endsWith(itemPhone))) return true;
+            }
+            return false;
+        };
 
         // 1. Xóa khỏi Firebase Realtime Database qua SDK
         if (this.isAvailable()) {
@@ -1156,22 +1172,25 @@ class RealtimeSyncManager {
                     await this.db.ref(`goride_pending_drivers/${userId}`).remove();
                     await this.db.ref(`goride_drivers/${userId}`).remove();
                     await this.db.ref(`goride_online_drivers/${userId}`).remove();
+                    await this.db.ref(`goride_customers/${userId}`).remove();
                 }
-                // Nếu có email, quét xóa nếu key khác userId
-                if (userEmail) {
-                    const normEmail = userEmail.toLowerCase().trim();
-                    const uSnap = await this.db.ref('goride_users').once('value');
-                    const uVal = uSnap.val() || {};
-                    for (const [k, u] of Object.entries(uVal)) {
-                        if (u && u.email && u.email.toLowerCase().trim() === normEmail) {
-                            await this.db.ref(`goride_users/${k}`).remove();
-                            await this.db.ref(`goride_pending_drivers/${k}`).remove();
-                            await this.db.ref(`goride_drivers/${k}`).remove();
-                            await this.db.ref(`goride_online_drivers/${k}`).remove();
-                        }
+
+                // Quét triệt để tất cả các bảng người dùng để xóa sạch theo email/sđt nếu có
+                if (normEmail || cleanPhone) {
+                    const targetCollections = ['goride_users', 'goride_pending_drivers', 'goride_drivers', 'goride_customers'];
+                    for (const col of targetCollections) {
+                        try {
+                            const snap = await this.db.ref(col).once('value');
+                            const val = snap.val() || {};
+                            for (const [k, obj] of Object.entries(val)) {
+                                if (k === userId || isMatch(obj)) {
+                                    await this.db.ref(`${col}/${k}`).remove();
+                                }
+                            }
+                        } catch (colErr) {}
                     }
                 }
-                console.log(`[RealtimeSync] 🗑️ Đã xóa sạch dữ liệu người dùng ${userId || userEmail} trên Firebase Realtime Cloud!`);
+                console.log(`[RealtimeSync] 🗑️ Đã xóa sạch dữ liệu người dùng ${userId || userEmail || userPhone} trên Firebase Realtime Cloud!`);
             } catch (err) {
                 if (err.message && err.message.includes('PERMISSION_DENIED')) this._handlePermissionDenied('deleteUser');
                 console.warn('[RealtimeSync] Lỗi xóa Firebase deleteUser:', err.message);
@@ -1179,39 +1198,75 @@ class RealtimeSyncManager {
         }
 
         // 2. Dual REST fallback delete
-        if (this.databaseURL && userId) {
-            await this._restDelete(`goride_users/${userId}`);
-            await this._restDelete(`goride_pending_drivers/${userId}`);
-            await this._restDelete(`goride_drivers/${userId}`);
-            await this._restDelete(`goride_online_drivers/${userId}`);
+        if (this.databaseURL) {
+            try {
+                if (userId) {
+                    await this._restDelete(`goride_users/${userId}`);
+                    await this._restDelete(`goride_pending_drivers/${userId}`);
+                    await this._restDelete(`goride_drivers/${userId}`);
+                    await this._restDelete(`goride_online_drivers/${userId}`);
+                    await this._restDelete(`goride_customers/${userId}`);
+                }
+
+                // REST scan & purge if email or phone provided
+                if (normEmail || cleanPhone) {
+                    const targetCols = ['goride_users', 'goride_pending_drivers', 'goride_drivers'];
+                    for (const col of targetCols) {
+                        try {
+                            const restData = await this._restGet(col);
+                            if (restData && typeof restData === 'object') {
+                                for (const [k, obj] of Object.entries(restData)) {
+                                    if (k === userId || isMatch(obj)) {
+                                        await this._restDelete(`${col}/${k}`);
+                                    }
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                }
+            } catch (restErr) {}
         }
 
-        // 3. Xóa sạch sẽ trong LocalStorage
+        // 3. Đồng bộ xóa trong SQLite Backend API
+        if (typeof apiClient !== 'undefined') {
+            try {
+                await apiClient.post('/admin/users/delete', {
+                    userId: userId || '',
+                    email: normEmail || '',
+                    phone: rawPhone || ''
+                });
+            } catch (apiErr) {}
+        }
+
+        // 4. Xóa sạch sẽ trong LocalStorage
         try {
-            const normEmail = (userEmail || '').toLowerCase().trim();
             const users = JSON.parse(localStorage.getItem('goride_offline_users') || '[]');
-            const filtered = users.filter(u => !(u.id === userId || (normEmail && u.email && u.email.toLowerCase().trim() === normEmail)));
-            localStorage.setItem('goride_offline_users', JSON.stringify(filtered));
+            const filteredUsers = users.filter(u => !isMatch(u));
+            localStorage.setItem('goride_offline_users', JSON.stringify(filteredUsers));
 
             // Xóa khỏi danh sách tài xế
             const drivers = JSON.parse(localStorage.getItem('goride_admin_drivers') || '[]');
-            const filteredDrivers = drivers.filter(d => !(d.id === userId || (normEmail && d.email && d.email.toLowerCase().trim() === normEmail)));
+            const filteredDrivers = drivers.filter(d => !isMatch(d));
             localStorage.setItem('goride_admin_drivers', JSON.stringify(filteredDrivers));
 
             // Xóa khỏi danh sách chờ duyệt
             const pending = JSON.parse(localStorage.getItem('goride_pending_drivers') || '[]');
-            const filteredPending = pending.filter(p => !(p.id === userId || (normEmail && p.email && p.email.toLowerCase().trim() === normEmail)));
+            const filteredPending = pending.filter(p => !isMatch(p));
             localStorage.setItem('goride_pending_drivers', JSON.stringify(filteredPending));
 
             // Xóa khỏi online drivers
             const online = JSON.parse(localStorage.getItem('goride_online_drivers') || '{}');
             if (userId && online[userId]) delete online[userId];
+            for (const [k, o] of Object.entries(online)) {
+                if (k === userId || isMatch(o)) delete online[k];
+            }
             localStorage.setItem('goride_online_drivers', JSON.stringify(online));
 
             // Xóa toàn bộ key cuốc xe cách ly của tài khoản này
             const targetKeys = [
                 userId ? `goride_trips_${String(userId).trim().toLowerCase().replace(/[^a-z0-9_@.-]/gi, '_')}` : null,
-                normEmail ? `goride_trips_${normEmail.replace(/[^a-z0-9_@.-]/gi, '_')}` : null
+                normEmail ? `goride_trips_${normEmail.replace(/[^a-z0-9_@.-]/gi, '_')}` : null,
+                cleanPhone ? `goride_trips_${cleanPhone}` : null
             ].filter(Boolean);
 
             targetKeys.forEach(k => {

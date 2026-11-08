@@ -9,8 +9,52 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../css/design-system.css">
-    <link rel="stylesheet" href="../css/gsm-app.css">
+    <link rel="stylesheet" href="../css/gsm-app.css?v=20261106_v5">
     <style>
+        /* Top Navbar & Guest Dropdown: Guaranteed Topmost Layer */
+        .gsm-pc-navbar {
+            position: sticky !important;
+            top: 0 !important;
+            overflow: visible !important;
+            z-index: 2147483646 !important;
+            background: #ffffff !important;
+        }
+        .gsm-pc-navbar-actions,
+        .gsm-pc-navbar > div:last-child {
+            position: relative !important;
+            overflow: visible !important;
+            z-index: 2147483647 !important;
+        }
+        .gsm-guest-menu-wrapper {
+            position: relative !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            overflow: visible !important;
+            z-index: 2147483647 !important;
+        }
+        .gsm-guest-dropdown {
+            position: absolute !important;
+            top: calc(100% + 10px) !important;
+            right: 0 !important;
+            z-index: 2147483647 !important;
+            min-width: 250px !important;
+            background: #ffffff !important;
+            border: 1.5px solid #e2e8f0 !important;
+            border-radius: 20px !important;
+            box-shadow: 0 20px 50px rgba(15, 45, 60, 0.25), 0 4px 15px rgba(0, 0, 0, 0.08) !important;
+            padding: 14px !important;
+            box-sizing: border-box !important;
+            pointer-events: auto !important;
+            display: none;
+        }
+        .gsm-guest-dropdown.show,
+        .gsm-guest-dropdown[style*="display: block"],
+        .gsm-guest-dropdown[style*="display:block"] {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+        }
         .gsm-profile-page-wrapper {
             width: 100%;
             max-width: 680px;
@@ -131,14 +175,25 @@
             <a href="profile.html" class="gsm-pc-nav-link active">👤 Hồ sơ</a>
         </div>
 
-        <div style="display:flex; align-items:center; gap:12px;">
-            <div data-auth="guest" style="display:flex; align-items:center; gap:8px;">
-                <a href="login.html" class="gsm-btn-primary-cta" style="height:36px; padding:0 16px; border-radius:9999px; text-decoration:none; font-size:0.85rem;">
-                    Đăng nhập
-                </a>
-                <a href="register.html" style="height:36px; padding:0 14px; border-radius:9999px; text-decoration:none; font-size:0.85rem; font-weight:700; color:#0f2d3c; border:1px solid #cbd5e1; display:flex; align-items:center;">
-                    Đăng ký
-                </a>
+        <div class="gsm-pc-navbar-actions" style="display:flex; align-items:center; gap:12px; position:relative; overflow:visible; z-index:2147483647;">
+            <div data-auth="guest" class="gsm-guest-menu-wrapper">
+                <button type="button" class="gsm-guest-account-btn" id="guest-account-trigger" title="Tài khoản" aria-label="Tài khoản">
+                    <div class="gsm-guest-avatar-icon">👤</div>
+                    <span class="gsm-guest-account-label">Tài khoản</span>
+                    <span class="gsm-guest-account-arrow">▼</span>
+                </button>
+                <div class="gsm-guest-dropdown" id="guest-account-dropdown">
+                    <div class="gsm-guest-dropdown-header">
+                        <div class="gsm-guest-dropdown-title">Chào mừng bạn!</div>
+                        <div class="gsm-guest-dropdown-sub">Đăng nhập để xem hồ sơ cá nhân</div>
+                    </div>
+                    <a href="login.html?redirect=profile.html" class="gsm-guest-dropdown-item item-login">
+                        <span>🔑</span> Đăng nhập
+                    </a>
+                    <a href="register.html?redirect=profile.html" class="gsm-guest-dropdown-item item-register">
+                        <span>📝</span> Đăng ký tài khoản
+                    </a>
+                </div>
             </div>
             <div data-auth="user" style="display:none; align-items:center; gap:10px;">
                 <a href="profile.html" style="display:flex; align-items:center; gap:8px; text-decoration:none; color:#0f2d3c; font-weight:700; font-size:0.9rem;">
@@ -379,7 +434,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
     <script src="../js/core/firebase-config.js"></script>
     <script src="../js/core/api.js"></script>
-    <script src="../js/core/session.js"></script>
+    <script src="../js/core/session.js?v=20261106_v5"></script>
     <script src="../js/core/wallet.js"></script>
     <script src="../js/core/notifications.js"></script>
     <script src="../js/core/realtime.js"></script>
@@ -1125,6 +1180,32 @@
             container.style.display = 'block';
 
             const role = (user.role || 'customer').toLowerCase();
+            if (role === 'admin') {
+                container.innerHTML = `
+                    <div style="background:linear-gradient(135deg, #0f2d3c 0%, #1e3a8a 100%); border-radius:20px; padding:20px; color:#ffffff; margin-bottom:18px; box-shadow:0 8px 24px rgba(15,45,60,0.18); border:1.5px solid rgba(251,191,36,0.35);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.15); padding-bottom:10px;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:1.4rem;">🛡️</span>
+                                <span style="font-size:1.05rem; font-weight:800; color:#fbbf24;">Đặc quyền Quản trị viên Hệ thống</span>
+                            </div>
+                            <span style="font-size:0.75rem; background:rgba(251,191,36,0.2); color:#fbbf24; padding:3px 10px; border-radius:9999px; font-weight:700; border:1px solid rgba(251,191,36,0.4);">Toàn quyền Quản trị</span>
+                        </div>
+                        <p style="font-size:0.84rem; color:#cbd5e1; margin:0 0 14px; line-height:1.5;">
+                            Tài khoản này được phân quyền Quản trị viên: toàn quyền giám sát hệ thống cuốc xe thời gian thực, quản lý và phê duyệt đối tác tài xế, quản lý tài khoản người dùng và phát hành thông báo ưu đãi toàn hệ thống.
+                        </p>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                            <a href="admin.html" style="display:flex; align-items:center; justify-content:center; gap:6px; height:40px; background:#00b1a9; color:#ffffff; text-decoration:none; border-radius:10px; font-weight:800; font-size:0.85rem; box-shadow:0 4px 12px rgba(0,177,169,0.3);">
+                                📊 Trung tâm Quản trị
+                            </a>
+                            <a href="admin.html#recent-trips" style="display:flex; align-items:center; justify-content:center; gap:6px; height:40px; background:rgba(255,255,255,0.1); color:#ffffff; text-decoration:none; border-radius:10px; font-weight:700; font-size:0.85rem; border:1px solid rgba(255,255,255,0.2);">
+                                📋 Giám sát Hoạt động
+                            </a>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
             const isDriver = (role === 'driver');
             const roleTitle = isDriver ? 'khách hàng' : 'tài xế';
             const counterpartyTitle = isDriver ? 'Đánh giá từ khách hàng' : 'Đánh giá từ tài xế';

@@ -1041,26 +1041,30 @@ class AdminController {
     }
 
     setupUserMenu() {
-        if (!this._userMenuBound) { if (true) {
+        if (!this._userMenuBound) {
             this._userMenuBound = true;
             const menuBtn = document.getElementById('user-menu-btn');
             const dropdown = document.getElementById('user-menu-dropdown');
+            const userMenu = document.getElementById('admin-user-menu') || menuBtn?.closest('.user-menu');
             if (menuBtn && dropdown) {
                 menuBtn.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    const isHidden = dropdown.style.display === 'none' || !dropdown.style.display;
-                    dropdown.style.display = isHidden ? 'block' : 'none';
+                    const isOpening = dropdown.style.display === 'none' || !dropdown.style.display;
+                    dropdown.style.display = isOpening ? 'block' : 'none';
+                    if (userMenu) {
+                        userMenu.classList.toggle('is-open', isOpening);
+                    }
                 });
     
                 document.addEventListener('click', (e) => {
                     if (!menuBtn.contains(e.target) && !dropdown.contains(e.target)) {
                         dropdown.style.display = 'none';
+                        if (userMenu) {
+                            userMenu.classList.remove('is-open');
+                        }
                     }
                 });
-
-                    }
-    
             }
         }
         if (typeof sessionManager !== 'undefined') {
@@ -1083,26 +1087,67 @@ class AdminController {
         }
     }
 
-    setupLogout() {
-        document.querySelectorAll('[data-action="logout"], .admin-sidebar-btn-logout').forEach(el => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                if (typeof sessionManager !== 'undefined' && sessionManager.confirmLogout) {
-                    sessionManager.confirmLogout();
-                } else {
-                    if (confirm('Bạn có chắc chắn muốn đăng xuất khỏi phiên quản trị?')) {
-                        try {
-                            localStorage.clear();
-                            sessionStorage.clear();
-                        } catch(err) {}
-                        window.location.href = '../loading.html?from=logout';
-                    }
-                }
-            });
-            if (false) { if (false) {
-                    }
-                }
+    logout(e) {
+        if (e) {
+            try { e.preventDefault(); } catch(err) {}
+            try { e.stopPropagation(); } catch(err) {}
+        }
 
+        // Close dropdown immediately
+        const dropdown = document.getElementById('user-menu-dropdown');
+        if (dropdown) dropdown.style.display = 'none';
+        const userMenu = document.getElementById('admin-user-menu');
+        if (userMenu) userMenu.classList.remove('is-open');
+
+        const executeLogout = () => {
+            try {
+                if (typeof sessionManager !== 'undefined' && typeof sessionManager.logout === 'function') {
+                    sessionManager.logout();
+                }
+                const keysToRemove = [
+                    'ride_rtree_user', 'ride_rtree_token',
+                    'goride_user', 'goride_token',
+                    'navigo_user', 'navigo_token',
+                    'user', 'token', 'currentUser', 'session_user', 'user_token', 'auth_token',
+                    'goride_active_trip', 'goride_driver_online_state', 'navigo_driver_online_state',
+                    'goride_driver_last_location', 'goride_pending_trip_offers', 'goride_current_order',
+                    'goride_handled_offers',
+                    'navigo_session_loaded', 'navigo_session_location_prompted',
+                    'navigo_loading_screen_active', 'navigo_from_loading', 'navigo_from_logout'
+                ];
+                keysToRemove.forEach(k => {
+                    try { localStorage.removeItem(k); } catch(err) {}
+                    try { sessionStorage.removeItem(k); } catch(err) {}
+                });
+                localStorage.setItem('goride_logged_out', '1');
+            } catch(err) {}
+            window.location.href = '../loading.html?from=logout';
+        };
+
+        if (typeof sessionManager !== 'undefined' && typeof sessionManager.confirmLogout === 'function') {
+            sessionManager.confirmLogout();
+        } else if (typeof window.showNavigoModal === 'function') {
+            window.showNavigoModal({
+                title: 'Xác nhận đăng xuất',
+                message: 'Bạn có chắc chắn muốn đăng xuất khỏi phiên quản trị?',
+                icon: '🚪',
+                confirmText: 'Đăng xuất',
+                cancelText: 'Hủy',
+                danger: true,
+                onConfirm: executeLogout
+            });
+        } else {
+            if (confirm('Bạn có chắc chắn muốn đăng xuất khỏi phiên quản trị?')) {
+                executeLogout();
+            }
+        }
+    }
+
+    setupLogout() {
+        document.querySelectorAll('[data-action="logout"], .admin-sidebar-btn-logout, #btn-admin-dropdown-logout').forEach(el => {
+            el.addEventListener('click', (e) => {
+                this.logout(e);
+            });
         });
     }
 
@@ -2382,10 +2427,11 @@ class AdminController {
             for (const u of offline) {
                 if (u && (u.id || u.email)) {
                     const key = u.id || u.email;
-                    userMap.set(key, { ...u, ...userMap.get(key) });
+                    const existing = userMap.get(key) || {};
+                    // Local user state (e.g. recent role changes, profile edits) safely overrides stale cloud snapshot
+                    userMap.set(key, { ...existing, ...u });
                 }
-                }
-
+            }
         } catch (e) {}
 
         // Baseline customer & admin accounts if not already included
@@ -2497,13 +2543,24 @@ class AdminController {
 
         tbody.innerHTML = customers.map(u => {
             const isAdmin = u.role === 'admin';
+            const isDriver = (u.role === 'driver') || (String(u.id || '').startsWith('drv_') && !isAdmin);
             const isLocked = u.status === 'locked';
             const completedCount = tripCountMap.get(u.id) || tripCountMap.get(u.phone) || tripCountMap.get(u.email) || 0;
             const createdDate = u.createdAt ? new Date(u.createdAt).toLocaleDateString('vi-VN') : '--';
             const avatarInitial = (u.name || 'U').charAt(0).toUpperCase();
+            const avatarBg = isAdmin ? '#ef4444' : (isDriver ? '#0288d1' : '#00897b');
             const avatarHtml = u.avatar || u.avatar_path
                 ? `<img src="${u.avatar || u.avatar_path}" alt="" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">`
-                : `<div class="avatar avatar-sm" style="width:32px; height:32px; border-radius:50%; background:${isAdmin ? '#ef4444' : '#0288d1'}; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12px;">${avatarInitial}</div>`;
+                : `<div class="avatar avatar-sm" style="width:32px; height:32px; border-radius:50%; background:${avatarBg}; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12px;">${avatarInitial}</div>`;
+
+            let roleBadgeHtml = '';
+            if (isAdmin) {
+                roleBadgeHtml = `<span class="badge" style="font-weight:700; font-size:0.72rem; padding:3px 8px; background:linear-gradient(135deg, #0f2d3c, #1e3a8a); color:#fbbf24; border:1px solid rgba(251,191,36,0.5);">👑 Quản trị viên</span>`;
+            } else if (isDriver) {
+                roleBadgeHtml = `<span class="badge" style="font-weight:700; font-size:0.72rem; padding:3px 8px; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe;">🚗 Đối tác Tài xế</span>`;
+            } else {
+                roleBadgeHtml = `<span class="badge badge-info" style="font-weight:700; font-size:0.72rem; padding:3px 8px;">👤 Khách hàng</span>`;
+            }
 
             return `
                 <tr id="customer-row-${u.id}">
@@ -2520,9 +2577,7 @@ class AdminController {
                     <td style="font-weight:600; font-family:monospace; color:#334155;">${this.escapeHtml(u.phone || '--')}</td>
                     <td style="font-size:0.8rem; color:#475569;">${this.escapeHtml(u.email || '--')}</td>
                     <td>
-                        <span class="badge ${isAdmin ? 'badge-danger' : 'badge-info'}" style="font-weight:700; font-size:0.72rem; padding:3px 8px;">
-                            ${isAdmin ? '👑 Quản trị viên' : '👤 Khách hàng'}
-                        </span>
+                        ${roleBadgeHtml}
                     </td>
                     <td style="font-weight:700; color:#0f766e; text-align:center;">${completedCount} chuyến</td>
                     <td>
@@ -2536,7 +2591,7 @@ class AdminController {
                             <button type="button" class="btn btn-sm ${isAdmin ? 'btn-ghost' : 'btn-primary'}" 
                                 style="font-size:0.74rem; padding:4px 8px; border-radius:6px; font-weight:700;"
                                 onclick="adminController.toggleAdminRole('${u.id}')"
-                                title="${isAdmin ? 'Hạ quyền xuống Khách hàng' : 'Thăng cấp lên Quản trị viên (Admin)'}">
+                                title="${isAdmin ? 'Hạ quyền xuống Khách hàng/Tài xế' : 'Thăng cấp lên Quản trị viên (Admin)'}">
                                 ${isAdmin ? '🔻 Bỏ Admin' : '⭐ Quyền Admin'}
                             </button>
                             <button type="button" class="btn btn-sm ${isLocked ? 'btn-success' : 'btn-ghost'}"
@@ -2563,8 +2618,11 @@ class AdminController {
         const user = (this.cachedCustomers || []).find(c => c.id === userId);
         if (!user) return;
 
-        const newRole = user.role === 'admin' ? 'customer' : 'admin';
-        const roleLabel = newRole === 'admin' ? 'Quản trị viên (Admin)' : 'Khách hàng';
+        let newRole = 'admin';
+        if (user.role === 'admin') {
+            newRole = (String(user.id || '').startsWith('drv_') || user.vehicleType || user.licensePlate) ? 'driver' : 'customer';
+        }
+        const roleLabel = newRole === 'admin' ? 'Quản trị viên (Admin)' : (newRole === 'driver' ? 'Đối tác Tài xế' : 'Khách hàng');
 
         if (!confirm(`Bạn có chắc muốn chuyển vai trò của tài khoản "${user.name}" thành ${roleLabel}?`)) {
             return;
@@ -2572,6 +2630,7 @@ class AdminController {
 
         try {
             user.role = newRole;
+            user.updatedAt = new Date().toISOString();
 
             // 1. Update SQLite backend if available
             if (typeof apiClient !== 'undefined') {
@@ -2581,13 +2640,17 @@ class AdminController {
             }
 
             // 2. Update Firebase Realtime Cloud
-            if (window.realtimeSync && window.realtimeSync.isAvailable()) {
+            if (window.realtimeSync) {
                 try {
-                    await window.realtimeSync.db.ref(`goride_users/${userId}`).update({
-                        role: newRole,
-                        updatedAt: new Date().toISOString()
-                    });
-        
+                    if (window.realtimeSync.isAvailable()) {
+                        await window.realtimeSync.db.ref(`goride_users/${userId}`).update({
+                            role: newRole,
+                            updatedAt: new Date().toISOString()
+                        });
+                    }
+                    if (typeof window.realtimeSync._restPut === 'function') {
+                        await window.realtimeSync._restPut(`goride_users/${userId}/role`, newRole);
+                    }
                 } catch (e) {}
             }
 
@@ -2597,7 +2660,18 @@ class AdminController {
                 const idx = users.findIndex(u => u.id === userId || (user.email && u.email === user.email));
                 if (idx !== -1) {
                     users[idx].role = newRole;
+                    users[idx].updatedAt = new Date().toISOString();
                     localStorage.setItem(this.STORAGE_KEYS.USERS, JSON.stringify(users));
+                }
+            } catch (e) {}
+
+            // 4. Update active session if target user is currently logged in
+            try {
+                if (typeof sessionManager !== 'undefined') {
+                    const cur = sessionManager.getUser();
+                    if (cur && (cur.id === userId || cur.email === user.email || cur.phone === user.phone)) {
+                        sessionManager.updateUser({ role: newRole });
+                    }
                 }
             } catch (e) {}
 
@@ -2791,76 +2865,72 @@ class AdminController {
             this.loadDashboard();
             this.showToast(`Đã xóa vĩnh viễn chuyến đi #${id}!`, 'info');
         } else if (type === 'driver') {
-            let drivers = this.getStoredDrivers();
-            drivers = drivers.filter(d => d && d.id !== id);
-            this.saveStoredDrivers(drivers);
-
-            // Also clean from pending, offline users, online, and Firebase
             try {
-                let pending = this.getPendingDrivers();
-                pending = pending.filter(d => d && d.id !== id);
-                this.savePendingDrivers(pending);
-
-                let users = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.USERS) || '[]');
-                users = users.filter(u => u && u.id !== id);
-                localStorage.setItem(this.STORAGE_KEYS.USERS, JSON.stringify(users));
-
-                let online = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.ONLINE_DRIVERS) || '{}');
-                delete online[id];
-                localStorage.setItem(this.STORAGE_KEYS.ONLINE_DRIVERS, JSON.stringify(online));
-
-                if (window.realtimeSync && window.realtimeSync.isAvailable()) {
-                    window.realtimeSync.db.ref('goride_drivers/' + id).remove();
-                    window.realtimeSync.db.ref('goride_pending_drivers/' + id).remove();
-                    window.realtimeSync.db.ref('goride_online_drivers/' + id).remove();
+                // Find driver details to get email and phone
+                const allDrivers = this.getStoredDrivers().concat(this.getPendingDrivers());
+                let targetDriver = allDrivers.find(d => d && (d.id === id || String(d.id) === String(id)));
+                if (!targetDriver) {
+                    const offlineUsers = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.USERS) || '[]');
+                    targetDriver = offlineUsers.find(u => u && (u.id === id || String(u.id) === String(id)));
                 }
-            } catch (e) {}
 
-            this.loadDriversList();
-            this.loadDriverApprovals();
-            this.loadDashboard();
-            this.showToast(`Đã xóa tài xế #${id} thành công!`, 'info');
-        } else if (type === 'customer') {
-            try {
-                const targetCustomer = (this.cachedCustomers || []).find(c => c.id === id);
+                const driverEmail = targetDriver?.email || '';
+                const driverPhone = targetDriver?.phone || '';
 
-                // 1. Delete from SQLite Backend API
+                // 1. Delete cleanly from Firebase Realtime Cloud & LocalStorage & Backend API via RealtimeSyncManager
+                if (window.realtimeSync && typeof window.realtimeSync.deleteUser === 'function') {
+                    await window.realtimeSync.deleteUser(id, driverEmail, driverPhone);
+                } else {
+                    // Fallback local cleanup
+                    let drivers = this.getStoredDrivers().filter(d => d && d.id !== id);
+                    this.saveStoredDrivers(drivers);
+                    let pending = this.getPendingDrivers().filter(d => d && d.id !== id);
+                    this.savePendingDrivers(pending);
+                    let users = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.USERS) || '[]').filter(u => u && u.id !== id);
+                    localStorage.setItem(this.STORAGE_KEYS.USERS, JSON.stringify(users));
+                }
+
+                // 2. Extra safety backend call
                 if (typeof apiClient !== 'undefined') {
                     try {
-                        await apiClient.post('/admin/users/delete', { userId: id });
+                        await apiClient.post('/admin/users/delete', { userId: id, email: driverEmail, phone: driverPhone });
                     } catch (e) {}
                 }
 
-                // 2. Delete cleanly from Firebase Realtime Cloud via RealtimeSyncManager
-                if (window.realtimeSync && typeof window.realtimeSync.deleteUser === 'function') {
-                    await window.realtimeSync.deleteUser(id, targetCustomer?.email);
-                } else if (window.realtimeSync && window.realtimeSync.isAvailable()) {
-                    window.realtimeSync.db.ref(`goride_users/${id}`).remove();
-                    window.realtimeSync.db.ref(`goride_drivers/${id}`).remove();
-                    window.realtimeSync.db.ref(`goride_pending_drivers/${id}`).remove();
-                    window.realtimeSync.db.ref(`goride_online_drivers/${id}`).remove();
+                this.loadDriversList();
+                this.loadDriverApprovals();
+                await this.loadCustomers();
+                this.loadDashboard();
+                this.showToast(`Đã xóa vĩnh viễn tài xế #${id} và làm sạch toàn bộ dữ liệu!`, 'info');
+            } catch (err) {
+                this.showToast('Lỗi xóa tài xế: ' + err.message, 'error');
+            }
+        } else if (type === 'customer') {
+            try {
+                let targetCustomer = (this.cachedCustomers || []).find(c => c && (c.id === id || String(c.id) === String(id)));
+                if (!targetCustomer) {
+                    const offlineUsers = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.USERS) || '[]');
+                    targetCustomer = offlineUsers.find(u => u && (u.id === id || String(u.id) === String(id)));
                 }
 
-                // 3. Purge cleanly from localStorage
-                let users = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.USERS) || '[]');
-                users = users.filter(u => !(u && (u.id === id || (targetCustomer && targetCustomer.email && u.email === targetCustomer.email))));
-                localStorage.setItem(this.STORAGE_KEYS.USERS, JSON.stringify(users));
+                const custEmail = targetCustomer?.email || '';
+                const custPhone = targetCustomer?.phone || '';
 
-                let adminDrivers = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.DRIVERS) || '[]');
-                adminDrivers = adminDrivers.filter(d => !(d && (d.id === id || (targetCustomer && targetCustomer.email && d.email === targetCustomer.email))));
-                localStorage.setItem(this.STORAGE_KEYS.DRIVERS, JSON.stringify(adminDrivers));
+                // 1. Delete cleanly from Firebase Realtime Cloud & LocalStorage & Backend API via RealtimeSyncManager
+                if (window.realtimeSync && typeof window.realtimeSync.deleteUser === 'function') {
+                    await window.realtimeSync.deleteUser(id, custEmail, custPhone);
+                }
 
-                let pending = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.PENDING) || '[]');
-                pending = pending.filter(p => !(p && (p.id === id || (targetCustomer && targetCustomer.email && p.email === targetCustomer.email))));
-                localStorage.setItem(this.STORAGE_KEYS.PENDING, JSON.stringify(pending));
-
-                let online = JSON.parse(localStorage.getItem(this.STORAGE_KEYS.ONLINE_DRIVERS) || '{}');
-                delete online[id];
-                localStorage.setItem(this.STORAGE_KEYS.ONLINE_DRIVERS, JSON.stringify(online));
+                // 2. Extra safety backend call
+                if (typeof apiClient !== 'undefined') {
+                    try {
+                        await apiClient.post('/admin/users/delete', { userId: id, email: custEmail, phone: custPhone });
+                    } catch (e) {}
+                }
 
                 // Clean cached list
                 if (this.cachedCustomers) {
-                    this.cachedCustomers = this.cachedCustomers.filter(c => c.id !== id);
+                    this.cachedCustomers = this.cachedCustomers.filter(c => c && c.id !== id && (!custEmail || c.email !== custEmail));
                 }
 
                 this.showToast(`Đã xóa vĩnh viễn tài khoản #${id} và dọn dẹp sạch toàn bộ database.`, 'info');

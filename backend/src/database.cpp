@@ -370,6 +370,10 @@ bool Database::open(const std::string& db_path) {
     close();
 
     path_ = resolve_database_path(db_path);
+    if (path_.find_first_of("<>\"|?*") != std::string::npos) {
+        std::cerr << "[Database Error] Invalid characters in database path: " << path_ << std::endl;
+        return false;
+    }
     if (!ensure_parent_directory(path_)) {
         std::cerr << "[Database Error] Failed to create parent directory for: " << path_ << std::endl;
         return false;
